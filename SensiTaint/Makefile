@@ -1,27 +1,15 @@
-# Simple Makefile for compiling a C file and showing LLVM IR
+# Makefile for sensitaint
 
-CC := clang
-CFLAGS := -Wall -Wextra -O2
-LDFLAGS :=
+CXX = g++
+CXXFLAGS = -O2 -std=c++17 -Wall -Wextra
 
-# Default target: compile the file passed as 'make FILE=source.c'
-all:
-	@if [ -z "$(FILE)" ]; then \
-		echo "Usage: make FILE=<source.c>"; \
-		exit 1; \
-	fi
-	@echo "[1/3] Generating LLVM IR..."
-	$(CC) $(CFLAGS) -S -emit-llvm $(FILE) -o $(basename $(FILE)).ll
+TARGET = sensitaint
+SRC = sensitaint.cc
 
-	@echo "[2/3] Displaying LLVM IR:"
-	@echo "----------------------------------------"
-	@cat $(basename $(FILE)).ll | head -n 40
-	@echo "----------------------------------------"
+all: $(TARGET)
 
-	@echo "[3/3] Compiling to binary..."
-	$(CC) $(CFLAGS) $(FILE) -o $(basename $(FILE)) $(LDFLAGS)
+$(TARGET): $(SRC)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRC)
 
-# Clean built artifacts
 clean:
-	rm -f *.o *.out *.exe *.a *.so *.ll
-	rm -f $(basename $(FILE))
+	rm -f $(TARGET)
