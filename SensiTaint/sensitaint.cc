@@ -158,7 +158,7 @@ void instrumentVars(Module* M, const std::vector<SensitiveVar>& vars, LLVMContex
 }
 
 // Process LLVM module
-void processModule(const std::string& llvmFile) {
+void processModule(const std::string& llvmFile, const std::string& outputFile) {
     LLVMContext Context;
     SMDiagnostic Err;
 
@@ -176,10 +176,10 @@ void processModule(const std::string& llvmFile) {
 
     // Write modified bitcode
     std::error_code EC;
-    raw_fd_ostream out("modified.bc", EC);
+    raw_fd_ostream out(outputFile, EC);
     if (!EC) {
         WriteBitcodeToFile(*M, out);
-        std::cout << "[SENSITAINT] Output written to modified.bc\n";
+        std::cout << "[SENSITAINT] Output written to " << outputFile << "\n";
     } else {
         std::cerr << "Error writing output: " << EC.message() << "\n";
     }
@@ -200,25 +200,27 @@ int main(int argc, char *argv[]) {
 
     std::string sourceFile = argv[1];
     std::string execFile = argv[2];
+    std::string tempBitcode = "temp.bc";
+    std::string modifiedBitcode = "modified.bc";
 
     std::cout << "=== Step 1: Compile to bitcode ===\n";
-    if (!runCommand("clang -O0 -emit-llvm -c " + sourceFile + " -o temp.bc")) {
+    if (!runCommand("clang -O0 -emit-llvm -c " + sourceFile + " -o " + tempBitcode)) {
         std::cerr << "Compilation failed\n";
         return 1;
     }
     
     std::cout << "\n=== Step 2: Instrument ===\n";
-    processModule("temp.bc");
+    processModule(tempBitcode, modifiedBitcode);
     
     std::cout << "\n=== Step 3: Link executable ===\n";
-    if (!runCommand("clang modified.bc -o " + execFile)) {
+    if (!runCommand("clang " + modifiedBitcode + " -o " + execFile)) {
         std::cerr << "Linking failed\n";
         return 1;
     }
     
     std::cout << "\n=== Step 4: Cleanup intermediate files ===\n";
     // Remove all the intermediate bytecode files
-    runCommand("rm -f temp.bc modified.bc");
+    runCommand("rm -f " + tempBitcode + " " + modifiedBitcode);
     std::cout << "Removed intermediate bytecode files\n";
     
     std::cout << "\n=== Success! ===\n";
