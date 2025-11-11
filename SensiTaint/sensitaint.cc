@@ -1,166 +1,228 @@
-#include "sensitaint.hh"
 #include <iostream>
 #include <string>
 #include <vector>
 #include <cstdlib>
 #include <memory>
+#include <system_error>
+
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
+#include "llvm/IR/Module.h" 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IRReader/IRReader.h"
 
-/*
-    Generally, I am envisioning the system working as follows:
-    - There is a source file (test.c)
-        - This source file includes the header "sensitive.h," which includes the definition
-           of the `sensitive` keyword.
-        - The programmer will label variables as `sensitive` in the source file
-    - There is also the library file (sensitaint.cc)
-        - This file will be compiled completely
-        - The user will run `./sensitaint test.c` to pass the source file to this executable
-        - This executable will compile the test.c to get the LLVM intermediate representation (IR) file (test.ll)
-        - Then, it will pass this IR file to a separate processor that will go through and find the `sensitive` variables
-            -> We will use PhASAR to go through and mark all of the secondary sensitive variables as such
-        - For each of these, it will insert a call to `register_sensitive` call into the code to track it in some memory
-*/
+using namespace llvm;
 
-// This is just to test the instruction insertion
-void insert_print(std::string llvm_file) {
-    llvm::LLVMContext Context;
-    llvm::SMDiagnostic Err;
+// Simple struct for tracking sensitive variables
+struct SensitiveVar {
+    Value* variable;
+    std::string name;
+    Instruction* location;
+    bool isGlobal;
+};
 
-    // Load the bitcode module
-    std::unique_ptr<llvm::Module> M = llvm::parseIRFile(llvm_file, Err, Context);
-    if (!M) {
-        Err.print("sensitaint", llvm::errs());
-        return;
-    }
-
-    // Pick the first function as an example insertion target
-    llvm::Function *F = nullptr;
-    for (auto &Func : *M) {
-        if (!Func.isDeclaration()) {
-            F = &Func;
-            break;
+// Extract annotation string from LLVM value
+std::string getAnnotationString(Value* ptr) {
+    if (auto *GV = dyn_cast<GlobalVariable>(ptr)) {
+        if (auto *init = GV->getInitializer()) {
+            if (auto *arr = dyn_cast<ConstantDataArray>(init)) {
+                return arr->getAsCString().str();
+            }
         }
     }
+    // Try indirect access
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(ptr)) {
+        return getAnnotationString(GEP->getPointerOperand());
+    }
+    return "";
+}
 
-    if (!F) {
-        std::cerr << "No suitable function found.\n";
+// Find all sensitive variables
+std::vector<SensitiveVar> findSensitiveVars(Module* M) {
+    std::vector<SensitiveVar> vars;
+    
+    // Check global annotations
+    if (auto *globalAnnotations = M->getGlobalVariable("llvm.global.annotations")) {
+        if (auto *annotationsArray = dyn_cast<ConstantArray>(globalAnnotations->getInitializer())) {
+            for (unsigned i = 0; i < annotationsArray->getNumOperands(); ++i) {
+                if (auto *annotationStruct = dyn_cast<ConstantStruct>(annotationsArray->getOperand(i))) {
+                    if (annotationStruct->getNumOperands() >= 2) {
+                        std::string annotation = getAnnotationString(annotationStruct->getOperand(1));
+                        if (annotation == "sensitive") {
+                            if (auto *globalVar = dyn_cast<GlobalVariable>(annotationStruct->getOperand(0))) {
+                                std::string name = globalVar->hasName() ? globalVar->getName().str() : "<unnamed>";
+                                vars.push_back({globalVar, name, nullptr, true});
+                                std::cout << "[SENSITAINT] Found global: " << name << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check local annotations
+    for (Function &F : *M) {
+        if (F.isDeclaration()) continue;
+        
+        for (BasicBlock &BB : F) {
+            for (Instruction &I : BB) {
+                if (auto *CI = dyn_cast<CallInst>(&I)) {
+                    if (auto *calledFunc = CI->getCalledFunction()) {
+                        if (calledFunc->getName().starts_with("llvm.var.annotation") && CI->getNumOperands() >= 2) {
+                            std::string annotation = getAnnotationString(CI->getOperand(1));
+                            if (annotation == "sensitive") {
+                                Value *var = CI->getOperand(0);
+                                std::string name = var->hasName() ? var->getName().str() : "<unnamed>";
+                                vars.push_back({var, name, CI, false});
+                                std::cout << "[SENSITAINT] Found local: " << name << " in " << F.getName().str() << "\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return vars;
+}
+
+// Get or create printf function
+Function* getPrintf(Module* M, LLVMContext& Context) {
+    if (auto *printfFunc = M->getFunction("printf")) {
+        return printfFunc;
+    }
+    
+    // Create printf declaration  
+    Type *charPtrTy = PointerType::get(Context, 0);
+    Type *intTy = Type::getInt32Ty(Context);
+    FunctionType *printfType = FunctionType::get(intTy, {charPtrTy}, true);
+    return Function::Create(printfType, Function::ExternalLinkage, "printf", M);
+}
+
+// Instrument sensitive variables
+void instrumentVars(Module* M, const std::vector<SensitiveVar>& vars, LLVMContext& Context) {
+    if (vars.empty()) {
+        std::cout << "[SENSITAINT] No variables to instrument\n";
+        return;
+    }
+    
+    Function *printfFunc = getPrintf(M, Context);
+    
+    for (const auto& var : vars) {
+        if (var.isGlobal) continue; // Skip globals for simplicity
+        
+        if (var.location) {
+            IRBuilder<> builder(Context);
+            if (Instruction *insertPoint = var.location->getNextNode()) {
+                builder.SetInsertPoint(insertPoint);
+                
+                // Get variable address by casting to void*
+                Type *voidPtrTy = PointerType::get(Context, 0);
+                Value *varAddr = builder.CreateBitCast(var.variable, voidPtrTy, "var_addr");
+                
+                // Get variable size - determine type and calculate size  
+                Type *varType = var.variable->getType();
+                uint64_t typeSize;
+                
+                // If it's an alloca instruction, get the allocated type
+                if (auto *AI = dyn_cast<AllocaInst>(var.variable)) {
+                    varType = AI->getAllocatedType();
+                    typeSize = M->getDataLayout().getTypeAllocSize(varType);
+                } else if (varType->isPointerTy()) {
+                    // For other pointer types, just use pointer size
+                    typeSize = M->getDataLayout().getPointerSize();
+                } else {
+                    // For non-pointer types, get the type size
+                    typeSize = M->getDataLayout().getTypeAllocSize(varType);
+                }
+                Value *sizeVal = ConstantInt::get(Type::getInt64Ty(Context), typeSize);
+                
+                // Create format string and variable name string
+                Constant *formatStr = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
+                Constant *nameStr = builder.CreateGlobalString(var.name);
+                
+                // Insert printf call with name, address, and size
+                builder.CreateCall(printfFunc, {formatStr, nameStr, varAddr, sizeVal});
+                std::cout << "[SENSITAINT] Instrumented: " << var.name << " (size: " << typeSize << " bytes)\n";
+            }
+        }
+    }
+}
+
+// Process LLVM module
+void processModule(const std::string& llvmFile) {
+    LLVMContext Context;
+    SMDiagnostic Err;
+
+    // Parse the LLVM IR file
+    std::unique_ptr<Module> M = parseIRFile(llvmFile, Err, Context);
+    if (!M) {
+        std::cerr << "Error parsing IR file\n";
+        Err.print("sensitaint", errs());
         return;
     }
 
-    // Insert code at the top of the first basic block
-    llvm::BasicBlock &entry = F->getEntryBlock();
-    llvm::IRBuilder<> builder(&*entry.getFirstInsertionPt());
+    // Find and instrument sensitive variables
+    auto vars = findSensitiveVars(M.get());
+    instrumentVars(M.get(), vars, Context);
 
-    // Create a printf declaration if it doesn't exist
-    llvm::Function *printfFunc = M->getFunction("printf");
-    if (!printfFunc) {
-        // Create printf function type: int printf(char*, ...)
-        llvm::Type *int8Ty = llvm::Type::getInt8Ty(Context);
-        llvm::Type *int8PtrTy = llvm::PointerType::get(int8Ty, 0);
-        llvm::Type *intTy = llvm::Type::getInt32Ty(Context);
-        llvm::FunctionType *printfType = llvm::FunctionType::get(intTy, {int8PtrTy}, true);
-        printfFunc = llvm::Function::Create(printfType, llvm::Function::ExternalLinkage, "printf", M.get());
-    }
-
-    // Create a global string constant for the message
-    llvm::Constant *formatStr = builder.CreateGlobalStringPtr("[SENSITAINT] Instrumentation active in function: %s\n", "sensitaint_msg");
-    
-    // Get the function name as a string
-    llvm::Constant *funcNameStr = builder.CreateGlobalStringPtr(F->getName(), "func_name");
-
-    // Insert the printf call
-    builder.CreateCall(printfFunc, {formatStr, funcNameStr});
-
-    // Let's allocate 1024 bytes of "shadow memory" (keeping original functionality)
-    llvm::Type *int8Ty = llvm::Type::getInt8Ty(Context);
-    llvm::Type *int32Ty = llvm::Type::getInt32Ty(Context);
-    llvm::Value *allocSize = llvm::ConstantInt::get(int32Ty, 1024);
-
-    llvm::Value *shadowPtr = builder.CreateAlloca(int8Ty, allocSize, "shadow_buf");
-
-    // Store something in shadow memory and print its address for verification
-    builder.CreateStore(llvm::ConstantInt::get(int8Ty, 42), shadowPtr);
-    
-    // Print the shadow buffer address for verification
-    llvm::Constant *addrFormatStr = builder.CreateGlobalStringPtr("[SENSITAINT] Shadow buffer allocated at: %p\n", "addr_msg");
-    llvm::Value *ptrAsInt = builder.CreatePtrToInt(shadowPtr, llvm::Type::getInt64Ty(Context));
-    builder.CreateCall(printfFunc, {addrFormatStr, ptrAsInt});
-
-    // Write the modified bitcode to a new file in the same directory as the source
-    // Extract directory from llvm_file path
-    size_t last_slash = llvm_file.find_last_of('/');
-    std::string directory = (last_slash != std::string::npos) ? llvm_file.substr(0, last_slash + 1) : "";
-    std::string output_path = directory + "modified.bc";
-    
+    // Write modified bitcode
     std::error_code EC;
-    llvm::raw_fd_ostream out(output_path, EC);
-    if (EC) {
-        std::cerr << "Error opening output file: " << EC.message() << "\n";
-        return;
+    raw_fd_ostream out("modified.bc", EC);
+    if (!EC) {
+        WriteBitcodeToFile(*M, out);
+        std::cout << "[SENSITAINT] Output written to modified.bc\n";
+    } else {
+        std::cerr << "Error writing output: " << EC.message() << "\n";
     }
-
-    llvm::WriteBitcodeToFile(*M, out);
-    out.close();
 }
 
-void generate_llvm(std::string source_file, std::string output_file) {
-    std::string cmd = "clang -O0 -emit-llvm -c -S " + source_file + " -o " + output_file;
-
+// Simple command runner
+bool runCommand(const std::string& cmd) {
     std::cout << "Running: " << cmd << "\n";
-
-    int ret = std::system(cmd.c_str());
-    if (ret != 0) {
-        FATAL("Compilation failed with return code %d", ret);
-    }
-
-    std::cout << "Compilation succeeded, output: " << output_file << "\n";
+    int result = std::system(cmd.c_str());
+    return result == 0;
 }
-
-void compile_bitcode(std::string bitcode_file, std::string output_executable) {
-    std::string cmd = "clang " + bitcode_file + " -o " + output_executable;
-
-    std::cout << "Running: " << cmd << "\n";
-
-    int ret = std::system(cmd.c_str());
-    if (ret != 0) {
-        FATAL("Compilation of bitcode failed with return code %d", ret);
-    }
-
-    std::cout << "Bitcode compilation succeeded, executable: " << output_executable << "\n";
-}
-
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        std::cerr << "Usage: " << argv[0] << " <path_to_code>\n";
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <source_file> <output_executable>\n";
         return 1;
     }
 
-    std::string source_file = argv[1];
-    std::string llvm_file = source_file.substr(0, source_file.find_last_of('.')) + ".bc";
-    std::string executable_file = source_file.substr(0, source_file.find_last_of('.')) + "_modified";
-    
-    // Get the directory of the source file for modified.bc path
-    size_t last_slash = source_file.find_last_of('/');
-    std::string directory = (last_slash != std::string::npos) ? source_file.substr(0, last_slash + 1) : "";
-    std::string modified_bc_path = directory + "modified.bc";
+    std::string sourceFile = argv[1];
+    std::string execFile = argv[2];
 
-    generate_llvm(source_file, llvm_file);
-
-    insert_print(llvm_file);
+    // Three-step pipeline: compile to bitcode, instrument, link
+    std::cout << "=== Step 1: Compile to bitcode ===\n";
+    if (!runCommand("clang -O0 -emit-llvm -c " + sourceFile + " -o temp.bc")) {
+        std::cerr << "Compilation failed\n";
+        return 1;
+    }
     
-    compile_bitcode(modified_bc_path, executable_file);
+    std::cout << "\n=== Step 2: Instrument ===\n";
+    processModule("temp.bc");
     
+    std::cout << "\n=== Step 3: Link executable ===\n";
+    if (!runCommand("clang modified.bc -o " + execFile)) {
+        std::cerr << "Linking failed\n";
+        return 1;
+    }
+    
+    std::cout << "\n=== Step 4: Cleanup intermediate files ===\n";
+    // Remove intermediate bytecode files
+    runCommand("rm -f temp.bc modified.bc");
+    std::cout << "Removed intermediate bytecode files\n";
+    
+    std::cout << "\n=== Success! ===\n";
+    std::cout << "Created executable: " << execFile << "\n";
     return 0;
 }
