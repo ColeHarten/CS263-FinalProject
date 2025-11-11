@@ -201,7 +201,6 @@ int main(int argc, char *argv[]) {
     std::string sourceFile = argv[1];
     std::string execFile = argv[2];
 
-    // Three-step pipeline: compile to bitcode, instrument, link
     std::cout << "=== Step 1: Compile to bitcode ===\n";
     if (!runCommand("clang -O0 -emit-llvm -c " + sourceFile + " -o temp.bc")) {
         std::cerr << "Compilation failed\n";
