@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     pkg-config \
     valgrind \
+    llvm-18 \
     strace && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 

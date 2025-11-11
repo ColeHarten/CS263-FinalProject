@@ -11,7 +11,10 @@
 *.ilk
 *.map
 *.exp
+
+# Temp files
 *.ll
+*.bc
 
 # Precompiled Headers
 *.gch
