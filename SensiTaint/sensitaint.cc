@@ -20,7 +20,7 @@
 
 using namespace llvm;
 
-// Simple struct for tracking sensitive variables
+// Struct for tracking sensitive variables
 struct SensitiveVar {
     Value* variable;
     std::string name;
@@ -107,7 +107,7 @@ Function* getPrintf(Module* M, LLVMContext& Context) {
     return Function::Create(printfType, Function::ExternalLinkage, "printf", M);
 }
 
-// Instrument sensitive variables
+// Insert logs for sensitive variables
 void instrumentVars(Module* M, const std::vector<SensitiveVar>& vars, LLVMContext& Context) {
     if (vars.empty()) {
         std::cout << "[SENSITAINT] No variables to instrument\n";
@@ -117,7 +117,7 @@ void instrumentVars(Module* M, const std::vector<SensitiveVar>& vars, LLVMContex
     Function *printfFunc = getPrintf(M, Context);
     
     for (const auto& var : vars) {
-        if (var.isGlobal) continue; // Skip globals for simplicity
+        if (var.isGlobal) continue; // Skip globals for now?
         
         if (var.location) {
             IRBuilder<> builder(Context);
@@ -185,7 +185,7 @@ void processModule(const std::string& llvmFile) {
     }
 }
 
-// Simple command runner
+// Just to log commands for debugging
 bool runCommand(const std::string& cmd) {
     std::cout << "Running: " << cmd << "\n";
     int result = std::system(cmd.c_str());
@@ -218,7 +218,7 @@ int main(int argc, char *argv[]) {
     }
     
     std::cout << "\n=== Step 4: Cleanup intermediate files ===\n";
-    // Remove intermediate bytecode files
+    // Remove all the intermediate bytecode files
     runCommand("rm -f temp.bc modified.bc");
     std::cout << "Removed intermediate bytecode files\n";
     
