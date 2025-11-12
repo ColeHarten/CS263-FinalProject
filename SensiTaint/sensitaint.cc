@@ -146,9 +146,7 @@ void instrument_vars(llvm::Module* m, const std::vector<SensitiveVar>& vars, llv
     }
 }
 
-std::shared_ptr<llvm::Module> parse_IRFile(const std::string& filename, SMDiagnostic& err, LLVMContext& context) {
-    return llvm::parseIRFile(filename, err, context);
-}
+
 
 // === PIPELINE FUNCTIONS ===
 
@@ -165,8 +163,18 @@ bool generate_bytecode(const std::string& source_file, const std::string& bitcod
 }
 
 // Step 2: Parse module and identify all sensitive variables
-std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_file, std::shared_ptr<llvm::Module> m, llvm::LLVMContext& context, llvm::SMDiagnostic& err) {
+std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_file, std::shared_ptr<llvm::Module>& m, llvm::LLVMContext& context, llvm::SMDiagnostic& err) {
     log_print("[STEP 2] Identifying sensitive variables...", false, Colors::BOLD + Colors::BLUE);
+
+    // parse the file
+    m = llvm::parseIRFile(bitcode_file, err, context);
+    if (!m) {
+        log_print("[ERROR] Failed to parse bitcode for instrumentation", true);
+        err.print("sensitaint", errs());
+        return {};
+    } else {
+        log_print("[STEP 2] Successfully parsed bitcode: " + bitcode_file, false, Colors::GREEN);
+    }
     
     auto vars = find_sensitive_vars(m.get());
     log_print("[STEP 2] Found " + std::to_string(vars.size()) + " sensitive variables:", false, Colors::GREEN);
@@ -180,16 +188,6 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
 // Step 3: Inject instrumentation for sensitive variables
 bool inject_instrumentation(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m, llvm::LLVMContext& context, llvm::SMDiagnostic& err) {
     log_print("[STEP 3] Injecting instrumentation...", false, Colors::BOLD + Colors::BLUE);
-
-    // LLVMContext context;
-    // SMDiagnostic err;
-    
-    // std::unique_ptr<Module> m = parseIRFile(input_file, err, context);
-    // if (!m) {
-    //     log_print("[ERROR] Failed to parse bitcode for instrumentation", true);
-    //     err.print("sensitaint", errs());
-    //     return false;
-    // }
     
     // auto vars = find_sensitive_vars(m.get());
     instrument_vars(m.get(), vars, context);
@@ -235,6 +233,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+
     std::string source_file = argv[1];
     std::string exec_file = argv[2];
     std::string temp_bitcode = "temp.bc";
@@ -243,22 +242,17 @@ int main(int argc, char *argv[]) {
     log_print("=== SensiTaint Instrumentation Pipeline ===", false, Colors::BOLD + Colors::CYAN);
     log_print("Source: " + source_file + " -> Executable: " + exec_file);
 
+    // 1: Generate bytecode
     if (!generate_bytecode(source_file, temp_bitcode)) {
         return 1;
     }
     log_print("");
 
-
-
-    LLVMContext context;
-    SMDiagnostic err;
+    // 2: Parse module and identify all sensitive variables
+    static LLVMContext context;
+    static SMDiagnostic err;
     
-    std::shared_ptr<Module> m = parse_IRFile(temp_bitcode, err, context);
-    if (!m) {
-        log_print("[ERROR] Failed to parse bitcode for instrumentation", true);
-        err.print("sensitaint", errs());
-        return 1;
-    }
+    std::shared_ptr<Module> m;
     
     std::vector<SensitiveVar> vars = identify_sensitive_vars(temp_bitcode, m, context, err);
     if (vars.empty()) {
@@ -266,16 +260,19 @@ int main(int argc, char *argv[]) {
     }
     log_print("");
 
+    // 3: Inject instrumentation
     if (!inject_instrumentation(temp_bitcode, modified_bitcode, vars, m, context, err)) {
         return 1;
     }
     log_print("");
     
+    // 4: Build final executable
     if (!build_executable(modified_bitcode, exec_file)) {
         return 1;
     }
     log_print("");
-    
+
+    // 5: Clean up temporary files
     cleanup_temp_files({temp_bitcode, modified_bitcode});
 
     log_print("\n=== Pipeline Complete ===", false, Colors::BOLD + Colors::GREEN);
