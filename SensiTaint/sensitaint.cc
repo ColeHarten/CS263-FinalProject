@@ -150,11 +150,29 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
 
 void declare_shadow_buffer(std::shared_ptr<llvm::Module> m) {
     llvm::LLVMContext& context = m->getContext();
-    llvm::Type *int8_ty = llvm::Type::getInt8Ty(context);
-    llvm::ArrayType *shadow_array_ty = llvm::ArrayType::get(int8_ty, SHADOW_BUFFER_SIZE);
-    new llvm::GlobalVariable(*m, shadow_array_ty, false, llvm::GlobalValue::ExternalLinkage, nullptr, "shadow_buffer");
+    
+    // Create LLVM struct type equivalent to SensitiveVarInfo
+    // struct SensitiveVarInfo { void* ptr; size_t size; }
+    llvm::Type *void_ptr_ty = llvm::PointerType::get(context, 0);
+    llvm::Type *size_t_ty = llvm::Type::getInt64Ty(context); // Assuming 64-bit size_t
+    
+    std::vector<llvm::Type*> struct_elements = {void_ptr_ty, size_t_ty};
+    llvm::StructType *sensitive_var_info_ty = llvm::StructType::create(context, struct_elements, "SensitiveVarInfo");
+    
+    // Calculate how many SensitiveVarInfo structs fit in SHADOW_BUFFER_SIZE
+    uint64_t struct_size = m->getDataLayout().getTypeAllocSize(sensitive_var_info_ty);
+    uint64_t num_entries = SHADOW_BUFFER_SIZE / struct_size;
+    
+    llvm::ArrayType *shadow_array_ty = llvm::ArrayType::get(sensitive_var_info_ty, num_entries);
+    
+    // Initialize as zero (BSS) - will be populated at runtime
+    llvm::Constant *array_initializer = llvm::ConstantAggregateZero::get(shadow_array_ty);
+    
+    new llvm::GlobalVariable(*m, shadow_array_ty, false, llvm::GlobalValue::ExternalLinkage, array_initializer, "shadow_buffer");
 
-    log_print("Declared shadow buffer of size " + std::to_string(SHADOW_BUFFER_SIZE) + " bytes");
+    log_print("Declared shadow buffer with " + std::to_string(num_entries) + 
+              " SensitiveVarInfo entries (struct size: " + std::to_string(struct_size) + 
+              " bytes, total: " + std::to_string(num_entries * struct_size) + " bytes) - zero-initialized for runtime population");
 }
 
 // === PIPELINE FUNCTIONS ===
@@ -282,7 +300,7 @@ int main(int argc, char *argv[]) {
     }
     log_print("");
 
-    // 5: Clean up temporary files
+    // 5: Clean up temporary files (temporarily disabled for debugging)
     cleanup_temp_files({temp_bitcode, modified_bitcode});
 
     log_print("\n=== Pipeline Complete ===", false, Colors::BOLD + Colors::GREEN);

@@ -17,6 +17,11 @@ struct SensitiveVar {
     bool isGlobal;
 };
 
+struct SensitiveVarInfo {
+    void* ptr;
+    size_t size;
+};
+
 void register_sensitive(void *ptr, size_t sz);
 void erase_sensitive();
 
