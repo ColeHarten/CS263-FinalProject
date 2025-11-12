@@ -1,4 +1,5 @@
 #include "sensitaint.hh"
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -21,8 +22,10 @@
 
 using namespace llvm;
 
+
+
 // Extract annotation string from LLVM value
-std::string getAnnotationString(Value* ptr) {
+std::string getAnnotationString(llvm::Value* ptr) {
     if (auto *GV = dyn_cast<GlobalVariable>(ptr)) {
         if (auto *init = GV->getInitializer()) {
             if (auto *arr = dyn_cast<ConstantDataArray>(init)) {
@@ -35,6 +38,27 @@ std::string getAnnotationString(Value* ptr) {
         return getAnnotationString(GEP->getPointerOperand());
     }
     return "";
+}
+
+
+// Just to log commands for debugging
+bool runCommand(const std::string& cmd) {
+    std::cout << "Running: " << cmd << "\n";
+    int result = std::system(cmd.c_str());
+    return result == 0;
+}
+
+// Get or create printf function
+Function* getPrintf(Module* M, LLVMContext& Context) {
+    if (auto *printfFunc = M->getFunction("printf")) {
+        return printfFunc;
+    }
+    
+    // Create printf declaration  
+    Type *charPtrTy = PointerType::get(Context, 0);
+    Type *intTy = Type::getInt32Ty(Context);
+    FunctionType *printfType = FunctionType::get(intTy, {charPtrTy}, true);
+    return Function::Create(printfType, Function::ExternalLinkage, "printf", M);
 }
 
 // Find all sensitive variables
@@ -85,19 +109,6 @@ std::vector<SensitiveVar> findSensitiveVars(Module* M) {
     }
     
     return vars;
-}
-
-// Get or create printf function
-Function* getPrintf(Module* M, LLVMContext& Context) {
-    if (auto *printfFunc = M->getFunction("printf")) {
-        return printfFunc;
-    }
-    
-    // Create printf declaration  
-    Type *charPtrTy = PointerType::get(Context, 0);
-    Type *intTy = Type::getInt32Ty(Context);
-    FunctionType *printfType = FunctionType::get(intTy, {charPtrTy}, true);
-    return Function::Create(printfType, Function::ExternalLinkage, "printf", M);
 }
 
 // Insert logs for sensitive variables
@@ -176,13 +187,6 @@ void processModule(const std::string& llvmFile, const std::string& outputFile) {
     } else {
         std::cerr << "Error writing output: " << EC.message() << "\n";
     }
-}
-
-// Just to log commands for debugging
-bool runCommand(const std::string& cmd) {
-    std::cout << "Running: " << cmd << "\n";
-    int result = std::system(cmd.c_str());
-    return result == 0;
 }
 
 int main(int argc, char *argv[]) {

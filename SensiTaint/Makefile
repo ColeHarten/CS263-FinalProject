@@ -8,7 +8,7 @@ LLVM_PREFIX ?= $(HOME)/cs263/CS263-FinalProject/lib/llvm/install
 LLVM_CONFIG = $(LLVM_PREFIX)/bin/llvm-config
 
 # Source files
-SRC = sensitaint.cc
+SRC = $(wildcard *.cc)
 TARGET = sensitaint
 
 # Compiler flags from LLVM
