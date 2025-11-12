@@ -1,3 +1,4 @@
+#include "sensitaint.hh"
 #include <iostream>
 #include <string>
 #include <vector>
@@ -19,14 +20,6 @@
 #include "llvm/IRReader/IRReader.h"
 
 using namespace llvm;
-
-// Struct for tracking sensitive variables
-struct SensitiveVar {
-    Value* variable;
-    std::string name;
-    Instruction* location;
-    bool isGlobal;
-};
 
 // Extract annotation string from LLVM value
 std::string getAnnotationString(Value* ptr) {
