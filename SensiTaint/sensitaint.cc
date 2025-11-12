@@ -22,19 +22,17 @@
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IRReader/IRReader.h"
 
-using namespace llvm;
-
 // Extract annotation string from LLVM value
-std::string get_annotation_string(Value* ptr) {
-    if (auto *gv = dyn_cast<GlobalVariable>(ptr)) {
+std::string get_annotation_string(llvm::Value* ptr) {
+    if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(ptr)) {
         if (auto *init = gv->getInitializer()) {
-            if (auto *arr = dyn_cast<ConstantDataArray>(init)) {
+            if (auto *arr = llvm::dyn_cast<llvm::ConstantDataArray>(init)) {
                 return arr->getAsCString().str();
             }
         }
     }
     // Try indirect access
-    if (auto *gep = dyn_cast<GetElementPtrInst>(ptr)) {
+    if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(ptr)) {
         return get_annotation_string(gep->getPointerOperand());
     }
     return "";
@@ -177,7 +175,7 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
     m = llvm::parseIRFile(bitcode_file, err, context);
     if (!m) {
         log_print("[ERROR] Failed to parse bitcode for instrumentation", true);
-        err.print("sensitaint", errs());
+        err.print("sensitaint", llvm::errs());
         return {};
     } else {
         log_print("[STEP 2] Successfully parsed bitcode: " + bitcode_file, false, Colors::GREEN);
@@ -202,7 +200,7 @@ bool inject_instrumentation(const std::string& input_file, const std::string& ou
     instrument_vars(m, vars);
     
     std::error_code ec;
-    raw_fd_ostream out(output_file, ec, sys::fs::OpenFlags::OF_None);
+    llvm::raw_fd_ostream out(output_file, ec, llvm::sys::fs::OpenFlags::OF_None);
     if (ec) {
         log_print("[ERROR] Failed to write instrumented bytecode: " + ec.message(), true);
         return false;
