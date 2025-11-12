@@ -24,22 +24,22 @@
 using namespace llvm;
 
 // Extract annotation string from LLVM value
-std::string getAnnotationString(Value* ptr) {
-    if (auto *GV = dyn_cast<GlobalVariable>(ptr)) {
-        if (auto *init = GV->getInitializer()) {
+std::string get_annotation_string(Value* ptr) {
+    if (auto *gv = dyn_cast<GlobalVariable>(ptr)) {
+        if (auto *init = gv->getInitializer()) {
             if (auto *arr = dyn_cast<ConstantDataArray>(init)) {
                 return arr->getAsCString().str();
             }
         }
     }
     // Try indirect access
-    if (auto *GEP = dyn_cast<GetElementPtrInst>(ptr)) {
-        return getAnnotationString(GEP->getPointerOperand());
+    if (auto *gep = dyn_cast<GetElementPtrInst>(ptr)) {
+        return get_annotation_string(gep->getPointerOperand());
     }
     return "";
 }
 
-// log function for compile time (of client function)
+// Log function for compile time (of client function)
 void log_print(const std::string& str, bool error = false, const std::string& color = "") {
     std::string prefix = Colors::CYAN + "[SENSITAINT]" + Colors::RESET + " ";
     
@@ -53,40 +53,40 @@ void log_print(const std::string& str, bool error = false, const std::string& co
 }
 
 // Just to log commands for debugging
-bool runCommand(const std::string& cmd) {
+bool run_command(const std::string& cmd) {
     log_print("Running command: " + cmd);
     int result = std::system(cmd.c_str());
     return result == 0;
 }
 
 // Get or create printf function
-llvm::Function* getPrintf(llvm::Module* M, llvm::LLVMContext& Context) {
-    if (auto *printfFunc = M->getFunction("printf")) {
-        return printfFunc;
+llvm::Function* get_printf(llvm::Module* m, llvm::LLVMContext& context) {
+    if (auto *printf_func = m->getFunction("printf")) {
+        return printf_func;
     }
     
     // Create printf declaration  
-    llvm::Type *charPtrTy = llvm::PointerType::get(Context, 0);
-    llvm::Type *intTy = llvm::Type::getInt32Ty(Context);
-    llvm::FunctionType *printfType = llvm::FunctionType::get(intTy, {charPtrTy}, true);
-    return llvm::Function::Create(printfType, llvm::Function::ExternalLinkage, "printf", M);
+    llvm::Type *char_ptr_ty = llvm::PointerType::get(context, 0);
+    llvm::Type *int_ty = llvm::Type::getInt32Ty(context);
+    llvm::FunctionType *printf_type = llvm::FunctionType::get(int_ty, {char_ptr_ty}, true);
+    return llvm::Function::Create(printf_type, llvm::Function::ExternalLinkage, "printf", m);
 }
 
 // Find all sensitive variables
-std::vector<SensitiveVar> findSensitiveVars(llvm::Module* M) {
+std::vector<SensitiveVar> find_sensitive_vars(llvm::Module* m) {
     std::vector<SensitiveVar> vars;
     
     // Check global annotations
-    if (auto *globalAnnotations = M->getGlobalVariable("llvm.global.annotations")) {
-        if (auto *annotationsArray = llvm::dyn_cast<llvm::ConstantArray>(globalAnnotations->getInitializer())) {
-            for (unsigned i = 0; i < annotationsArray->getNumOperands(); ++i) {
-                if (auto *annotationStruct = llvm::dyn_cast<llvm::ConstantStruct>(annotationsArray->getOperand(i))) {
-                    if (annotationStruct->getNumOperands() >= 2) {
-                        std::string annotation = getAnnotationString(annotationStruct->getOperand(1));
+    if (auto *global_annotations = m->getGlobalVariable("llvm.global.annotations")) {
+        if (auto *annotations_array = llvm::dyn_cast<llvm::ConstantArray>(global_annotations->getInitializer())) {
+            for (unsigned i = 0; i < annotations_array->getNumOperands(); ++i) {
+                if (auto *annotation_struct = llvm::dyn_cast<llvm::ConstantStruct>(annotations_array->getOperand(i))) {
+                    if (annotation_struct->getNumOperands() >= 2) {
+                        std::string annotation = get_annotation_string(annotation_struct->getOperand(1));
                         if (annotation == "sensitive") {
-                            if (auto *globalVar = llvm::dyn_cast<llvm::GlobalVariable>(annotationStruct->getOperand(0))) {
-                                std::string name = globalVar->hasName() ? globalVar->getName().str() : "<unnamed>";
-                                vars.push_back({globalVar, name, nullptr, true});
+                            if (auto *global_var = llvm::dyn_cast<llvm::GlobalVariable>(annotation_struct->getOperand(0))) {
+                                std::string name = global_var->hasName() ? global_var->getName().str() : "<unnamed>";
+                                vars.push_back({global_var, name, nullptr, true});
                                 log_print("Found global: " + name, false, Colors::MAGENTA);
                             }
                         }
@@ -97,20 +97,20 @@ std::vector<SensitiveVar> findSensitiveVars(llvm::Module* M) {
     }
     
     // Check local annotations
-    for (llvm::Function &F : *M) {
-        if (F.isDeclaration()) continue;
+    for (llvm::Function &f : *m) {
+        if (f.isDeclaration()) continue;
         
-        for (llvm::BasicBlock &BB : F) {
-            for (llvm::Instruction &I : BB) {
-                if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&I)) {
-                    if (auto *calledFunc = CI->getCalledFunction()) {
-                        if (calledFunc->getName().starts_with("llvm.var.annotation") && CI->getNumOperands() >= 2) {
-                            std::string annotation = getAnnotationString(CI->getOperand(1));
+        for (llvm::BasicBlock &bb : f) {
+            for (llvm::Instruction &i : bb) {
+                if (auto *ci = llvm::dyn_cast<llvm::CallInst>(&i)) {
+                    if (auto *called_func = ci->getCalledFunction()) {
+                        if (called_func->getName().starts_with("llvm.var.annotation") && ci->getNumOperands() >= 2) {
+                            std::string annotation = get_annotation_string(ci->getOperand(1));
                             if (annotation == "sensitive") {
-                                llvm::Value *var = CI->getOperand(0);
+                                llvm::Value *var = ci->getOperand(0);
                                 std::string name = var->hasName() ? var->getName().str() : "<unnamed>";
-                                vars.push_back({var, name, CI, false});
-                                log_print("Found local: " + name + " in " + F.getName().str(), false, Colors::MAGENTA);
+                                vars.push_back({var, name, ci, false});
+                                log_print("Found local: " + name + " in " + f.getName().str(), false, Colors::MAGENTA);
                             }
                         }
                     }
@@ -123,50 +123,43 @@ std::vector<SensitiveVar> findSensitiveVars(llvm::Module* M) {
 }
 
 // Insert logs for sensitive variables
-void instrumentVars(llvm::Module* M, const std::vector<SensitiveVar>& vars, llvm::LLVMContext& Context) {
+void instrument_vars(llvm::Module* m, const std::vector<SensitiveVar>& vars, llvm::LLVMContext& context) {
     if (vars.empty()) {
         log_print("No variables to instrument", true);
         return;
     }
     
-    llvm::Function *printfFunc = getPrintf(M, Context);
+    llvm::Function *printf_func = get_printf(m, context);
     
     for (const auto& var : vars) {
-        if (var.isGlobal) continue; // Skip globals for now?
+        if (var.isGlobal) continue;
         
         if (var.location) {
-            llvm::IRBuilder<> builder(Context);
-            if (llvm::Instruction *insertPoint = var.location->getNextNode()) {
-                builder.SetInsertPoint(insertPoint);
+            llvm::IRBuilder<> builder(context);
+            if (llvm::Instruction *insert_point = var.location->getNextNode()) {
+                builder.SetInsertPoint(insert_point);
                 
-                // Get variable address by casting to void*
-                llvm::Type *voidPtrTy = llvm::PointerType::get(Context, 0);
-                llvm::Value *varAddr = builder.CreateBitCast(var.variable, voidPtrTy, "var_addr");
+                llvm::Type *void_ptr_ty = llvm::PointerType::get(context, 0);
+                llvm::Value *var_addr = builder.CreateBitCast(var.variable, void_ptr_ty, "var_addr");
                 
-                // Get variable size - determine type and calculate size  
-                llvm::Type *varType = var.variable->getType();
-                uint64_t typeSize;
+                llvm::Type *var_type = var.variable->getType();
+                uint64_t type_size;
                 
-                // If it's an alloca instruction, get the allocated type
-                if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(var.variable)) {
-                    varType = AI->getAllocatedType();
-                    typeSize = M->getDataLayout().getTypeAllocSize(varType);
-                } else if (varType->isPointerTy()) {
-                    // For other pointer types, just use pointer size
-                    typeSize = M->getDataLayout().getPointerSize();
+                if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(var.variable)) {
+                    var_type = ai->getAllocatedType();
+                    type_size = m->getDataLayout().getTypeAllocSize(var_type);
+                } else if (var_type->isPointerTy()) {
+                    type_size = m->getDataLayout().getPointerSize();
                 } else {
-                    // For non-pointer types, get the type size
-                    typeSize = M->getDataLayout().getTypeAllocSize(varType);
+                    type_size = m->getDataLayout().getTypeAllocSize(var_type);
                 }
-                llvm::Value *sizeVal = llvm::ConstantInt::get(llvm::Type::getInt64Ty(Context), typeSize);
+                llvm::Value *size_val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_size);
                 
-                // Create format string and variable name string
-                llvm::Constant *formatStr = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
-                llvm::Constant *nameStr = builder.CreateGlobalString(var.name);
+                llvm::Constant *format_str = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
+                llvm::Constant *name_str = builder.CreateGlobalString(var.name);
                 
-                // Insert printf call with name, address, and size
-                builder.CreateCall(printfFunc, {formatStr, nameStr, varAddr, sizeVal});
-                log_print("Instrumented: " + var.name + " (size: " + std::to_string(typeSize) + " bytes)", false, Colors::GREEN);
+                builder.CreateCall(printf_func, {format_str, name_str, var_addr, size_val});
+                log_print("Instrumented: " + var.name + " (size: " + std::to_string(type_size) + " bytes)", false, Colors::GREEN);
             }
         }
     }
@@ -175,32 +168,32 @@ void instrumentVars(llvm::Module* M, const std::vector<SensitiveVar>& vars, llvm
 // === PIPELINE FUNCTIONS ===
 
 // Step 1: Generate basic bytecode from source
-bool generateBytecode(const std::string& sourceFile, const std::string& bitcodeFile) {
+bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
     log_print("[STEP 1] Generating bytecode from source...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = "clang -O0 -emit-llvm -c " + sourceFile + " -o " + bitcodeFile;
-    if (!runCommand(cmd)) {
+    std::string cmd = "clang -O0 -emit-llvm -c " + source_file + " -o " + bitcode_file;
+    if (!run_command(cmd)) {
         log_print("[ERROR] Failed to generate bytecode", true);
         return false;
     }
-    log_print("[STEP 1] Successfully generated: " + bitcodeFile, false, Colors::GREEN);
+    log_print("[STEP 1] Successfully generated: " + bitcode_file, false, Colors::GREEN);
     return true;
 }
 
 // Step 2: Parse module and identify all sensitive variables
-std::vector<SensitiveVar> identifySensitiveVars(const std::string& bitcodeFile) {
+std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_file) {
     log_print("[STEP 2] Identifying sensitive variables...", false, Colors::BOLD + Colors::BLUE);
 
-    llvm::LLVMContext Context;
-    llvm::SMDiagnostic Err;
+    llvm::LLVMContext context;
+    llvm::SMDiagnostic err;
     
-    std::unique_ptr<llvm::Module> M = parseIRFile(bitcodeFile, Err, Context);
-    if (!M) {
+    std::unique_ptr<llvm::Module> m = parseIRFile(bitcode_file, err, context);
+    if (!m) {
         log_print("[ERROR] Failed to parse bitcode file", true);
-        Err.print("sensitaint", llvm::errs());
+        err.print("sensitaint", llvm::errs());
         return {};
     }
     
-    auto vars = findSensitiveVars(M.get());
+    auto vars = find_sensitive_vars(m.get());
     log_print("[STEP 2] Found " + std::to_string(vars.size()) + " sensitive variables:", false, Colors::GREEN);
     for (const auto& var : vars) {
         log_print("  - " + var.name + " (" + (var.isGlobal ? "global" : "local") + ")");
@@ -210,54 +203,52 @@ std::vector<SensitiveVar> identifySensitiveVars(const std::string& bitcodeFile) 
 }
 
 // Step 3: Inject instrumentation for sensitive variables
-bool injectInstrumentation(const std::string& inputFile, const std::string& outputFile) {
+bool inject_instrumentation(const std::string& input_file, const std::string& output_file) {
     log_print("[STEP 3] Injecting instrumentation...", false, Colors::BOLD + Colors::BLUE);
 
-    LLVMContext Context;
-    SMDiagnostic Err;
+    LLVMContext context;
+    SMDiagnostic err;
     
-    std::unique_ptr<Module> M = parseIRFile(inputFile, Err, Context);
-    if (!M) {
+    std::unique_ptr<Module> m = parseIRFile(input_file, err, context);
+    if (!m) {
         log_print("[ERROR] Failed to parse bitcode for instrumentation", true);
-        Err.print("sensitaint", errs());
+        err.print("sensitaint", errs());
         return false;
     }
     
-    // Find and instrument variables in the same context
-    auto vars = findSensitiveVars(M.get());
-    instrumentVars(M.get(), vars, Context);
+    auto vars = find_sensitive_vars(m.get());
+    instrument_vars(m.get(), vars, context);
     
-    // Write the modified bytecode
-    std::error_code EC;
-    raw_fd_ostream out(outputFile, EC, sys::fs::OpenFlags::OF_None);
-    if (EC) {
-        log_print("[ERROR] Failed to write instrumented bytecode: " + EC.message(), true);
+    std::error_code ec;
+    raw_fd_ostream out(output_file, ec, sys::fs::OpenFlags::OF_None);
+    if (ec) {
+        log_print("[ERROR] Failed to write instrumented bytecode: " + ec.message(), true);
         return false;
     }
     
-    WriteBitcodeToFile(*M, out);
-    log_print("[STEP 3] Successfully instrumented and wrote: " + outputFile, false, Colors::GREEN);
+    WriteBitcodeToFile(*m, out);
+    log_print("[STEP 3] Successfully instrumented and wrote: " + output_file, false, Colors::GREEN);
     return true;
 }
 
 // Step 4: Build final executable
-bool buildExecutable(const std::string& bitcodeFile, const std::string& executableFile) {
+bool build_executable(const std::string& bitcode_file, const std::string& executable_file) {
     log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = "clang " + bitcodeFile + " -o " + executableFile;
-    if (!runCommand(cmd)) {
+    std::string cmd = "clang " + bitcode_file + " -o " + executable_file;
+    if (!run_command(cmd)) {
         log_print("[ERROR] Failed to build executable", true);
         return false;
     }
-    log_print("[STEP 4] Successfully built executable: " + executableFile, false, Colors::GREEN);
+    log_print("[STEP 4] Successfully built executable: " + executable_file, false, Colors::GREEN);
     return true;
 }
 
 // Step 5: Clean up temporary files
-void cleanupTempFiles(const std::vector<std::string>& tempFiles) {
+void cleanup_temp_files(const std::vector<std::string>& temp_files) {
     log_print("[STEP 5] Cleaning up temporary files...", false, Colors::BOLD + Colors::BLUE);
-    for (const auto& file : tempFiles) {
+    for (const auto& file : temp_files) {
         std::string cmd = "rm -f " + file;
-        runCommand(cmd);
+        run_command(cmd);
         log_print("  - Removed: " + file);
     }
     log_print("[STEP 5] Cleanup complete");
@@ -269,44 +260,39 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    std::string sourceFile = argv[1];
-    std::string execFile = argv[2];
-    std::string tempBitcode = "temp.bc";
-    std::string modifiedBitcode = "modified.bc";
+    std::string source_file = argv[1];
+    std::string exec_file = argv[2];
+    std::string temp_bitcode = "temp.bc";
+    std::string modified_bitcode = "modified.bc";
 
     log_print("=== SensiTaint Instrumentation Pipeline ===", false, Colors::BOLD + Colors::CYAN);
-    log_print("Source: " + sourceFile + " -> Executable: " + execFile);
+    log_print("Source: " + source_file + " -> Executable: " + exec_file);
 
-    // Step 1: Generate basic bytecode
-    if (!generateBytecode(sourceFile, tempBitcode)) {
+    if (!generate_bytecode(source_file, temp_bitcode)) {
         return 1;
     }
     log_print("");
     
-    // Step 2: Identify sensitive variables
-    std::vector<SensitiveVar> vars = identifySensitiveVars(tempBitcode);
+    std::vector<SensitiveVar> vars = identify_sensitive_vars(temp_bitcode);
     if (vars.empty()) {
         log_print("[WARNING] No sensitive variables found to instrument");
     }
     log_print("");
 
-    // Step 3: Inject instrumentation
-    if (!injectInstrumentation(tempBitcode, modifiedBitcode)) {
+    if (!inject_instrumentation(temp_bitcode, modified_bitcode)) {
         return 1;
     }
     log_print("");
     
-    // Step 4: Build final executable
-    if (!buildExecutable(modifiedBitcode, execFile)) {
+    if (!build_executable(modified_bitcode, exec_file)) {
         return 1;
     }
     log_print("");
     
-    // Step 5: Clean up temporary files
-    cleanupTempFiles({tempBitcode, modifiedBitcode});
+    cleanup_temp_files({temp_bitcode, modified_bitcode});
 
     log_print("\n=== Pipeline Complete ===", false, Colors::BOLD + Colors::GREEN);
-    log_print("Instrumented executable created: " + execFile);
+    log_print("Instrumented executable created: " + exec_file);
     log_print("Found and instrumented " + std::to_string(vars.size()) + " sensitive variables");
     return 0;
 }
