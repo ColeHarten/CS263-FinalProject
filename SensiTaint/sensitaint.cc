@@ -41,20 +41,22 @@ std::string get_annotation_string(Value* ptr) {
 }
 
 // Get or create printf function
-llvm::Function* get_printf(llvm::Module* m, llvm::LLVMContext& context) {
+llvm::Function* get_printf(std::shared_ptr<llvm::Module> m) {
     if (auto *printf_func = m->getFunction("printf")) {
         return printf_func;
     }
+
+    llvm::LLVMContext& context = m->getContext();
     
     // Create printf declaration  
     llvm::Type *char_ptr_ty = llvm::PointerType::get(context, 0);
     llvm::Type *int_ty = llvm::Type::getInt32Ty(context);
     llvm::FunctionType *printf_type = llvm::FunctionType::get(int_ty, {char_ptr_ty}, true);
-    return llvm::Function::Create(printf_type, llvm::Function::ExternalLinkage, "printf", m);
+    return llvm::Function::Create(printf_type, llvm::Function::ExternalLinkage, "printf", m.get());
 }
 
 // Find all sensitive variables
-std::vector<SensitiveVar> find_sensitive_vars(llvm::Module* m) {
+std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
     std::vector<SensitiveVar> vars;
     
     // Check global annotations
@@ -104,13 +106,15 @@ std::vector<SensitiveVar> find_sensitive_vars(llvm::Module* m) {
 }
 
 // Insert logs for sensitive variables
-void instrument_vars(llvm::Module* m, const std::vector<SensitiveVar>& vars, llvm::LLVMContext& context) {
+void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     if (vars.empty()) {
         log_print("No variables to instrument", true);
         return;
     }
+
+    llvm::LLVMContext& context = m->getContext();
     
-    llvm::Function *printf_func = get_printf(m, context);
+    llvm::Function *printf_func = get_printf(m);
     
     for (const auto& var : vars) {
         if (var.isGlobal) continue;
@@ -163,8 +167,11 @@ bool generate_bytecode(const std::string& source_file, const std::string& bitcod
 }
 
 // Step 2: Parse module and identify all sensitive variables
-std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_file, std::shared_ptr<llvm::Module>& m, llvm::LLVMContext& context, llvm::SMDiagnostic& err) {
+std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_file, std::shared_ptr<llvm::Module>& m) {
     log_print("[STEP 2] Identifying sensitive variables...", false, Colors::BOLD + Colors::BLUE);
+
+    static llvm::LLVMContext context;
+    static llvm::SMDiagnostic err;
 
     // parse the file
     m = llvm::parseIRFile(bitcode_file, err, context);
@@ -176,7 +183,7 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
         log_print("[STEP 2] Successfully parsed bitcode: " + bitcode_file, false, Colors::GREEN);
     }
     
-    auto vars = find_sensitive_vars(m.get());
+    auto vars = find_sensitive_vars(m);
     log_print("[STEP 2] Found " + std::to_string(vars.size()) + " sensitive variables:", false, Colors::GREEN);
     for (const auto& var : vars) {
         log_print("  - " + var.name + " (" + (var.isGlobal ? "global" : "local") + ")");
@@ -186,11 +193,13 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
 }
 
 // Step 3: Inject instrumentation for sensitive variables
-bool inject_instrumentation(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m, llvm::LLVMContext& context, llvm::SMDiagnostic& err) {
+bool inject_instrumentation(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
     log_print("[STEP 3] Injecting instrumentation...", false, Colors::BOLD + Colors::BLUE);
     
+    // llvm::LLVMContext& context = m->getContext();
+    
     // auto vars = find_sensitive_vars(m.get());
-    instrument_vars(m.get(), vars, context);
+    instrument_vars(m, vars);
     
     std::error_code ec;
     raw_fd_ostream out(output_file, ec, sys::fs::OpenFlags::OF_None);
@@ -233,7 +242,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-
     std::string source_file = argv[1];
     std::string exec_file = argv[2];
     std::string temp_bitcode = "temp.bc";
@@ -248,20 +256,17 @@ int main(int argc, char *argv[]) {
     }
     log_print("");
 
-    // 2: Parse module and identify all sensitive variables
-    static LLVMContext context;
-    static SMDiagnostic err;
+    // 2: Parse module and identify all sensitive variables    
+    std::shared_ptr<llvm::Module> m;
     
-    std::shared_ptr<Module> m;
-    
-    std::vector<SensitiveVar> vars = identify_sensitive_vars(temp_bitcode, m, context, err);
+    std::vector<SensitiveVar> vars = identify_sensitive_vars(temp_bitcode, m);
     if (vars.empty()) {
         log_print("[WARNING] No sensitive variables found to instrument");
     }
     log_print("");
 
     // 3: Inject instrumentation
-    if (!inject_instrumentation(temp_bitcode, modified_bitcode, vars, m, context, err)) {
+    if (!inject_instrumentation(temp_bitcode, modified_bitcode, vars, m)) {
         return 1;
     }
     log_print("");
