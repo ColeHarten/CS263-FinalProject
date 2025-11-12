@@ -6,6 +6,8 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Instruction.h"
 
+#define SHADOW_BUFFER_SIZE (1 << 20) // 1 MB shadow buffer
+
 
 // Struct for tracking sensitive variables
 struct SensitiveVar {

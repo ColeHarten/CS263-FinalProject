@@ -142,13 +142,20 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
                 llvm::Constant *name_str = builder.CreateGlobalString(var.name);
                 
                 builder.CreateCall(printf_func, {format_str, name_str, var_addr, size_val});
-                log_print("Instrumented: " + var.name + " (size: " + std::to_string(type_size) + " bytes)", false, Colors::GREEN);
+                log_print("- Instrumented: " + var.name + " (size: " + std::to_string(type_size) + " bytes)", false);
             }
         }
     }
 }
 
+void declare_shadow_buffer(std::shared_ptr<llvm::Module> m) {
+    llvm::LLVMContext& context = m->getContext();
+    llvm::Type *int8_ty = llvm::Type::getInt8Ty(context);
+    llvm::ArrayType *shadow_array_ty = llvm::ArrayType::get(int8_ty, SHADOW_BUFFER_SIZE);
+    new llvm::GlobalVariable(*m, shadow_array_ty, false, llvm::GlobalValue::ExternalLinkage, nullptr, "shadow_buffer");
 
+    log_print("Declared shadow buffer of size " + std::to_string(SHADOW_BUFFER_SIZE) + " bytes");
+}
 
 // === PIPELINE FUNCTIONS ===
 
@@ -194,7 +201,7 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
 bool inject_instrumentation(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
     log_print("[STEP 3] Injecting instrumentation...", false, Colors::BOLD + Colors::BLUE);
     
-    // llvm::LLVMContext& context = m->getContext();
+    declare_shadow_buffer(m);
     
     // auto vars = find_sensitive_vars(m.get());
     instrument_vars(m, vars);
