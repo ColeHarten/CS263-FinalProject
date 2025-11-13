@@ -53,6 +53,23 @@ llvm::Function* get_printf(std::shared_ptr<llvm::Module> m) {
     return llvm::Function::Create(printf_type, llvm::Function::ExternalLinkage, "printf", m.get());
 }
 
+
+// Get the record_sensitive_var function, or declare it if not present
+llvm::Function* get_record_sensitive_var(std::shared_ptr<llvm::Module> m) {
+    if (auto *f = m->getFunction("record_sensitive_var"))
+        return f;
+    
+    llvm::LLVMContext &ctx = m->getContext();
+    llvm::Type *void_ty = llvm::Type::getVoidTy(ctx);
+    llvm::Type *char_ptr_ty = llvm::PointerType::get(ctx, 0);  // const char* name
+    llvm::Type *void_ptr_ty = llvm::PointerType::get(ctx, 0);  // void* ptr
+    llvm::Type *size_ty = llvm::Type::getInt64Ty(ctx);         // size_t sz
+    llvm::FunctionType *fn_ty = llvm::FunctionType::get(void_ty, {char_ptr_ty, void_ptr_ty, size_ty}, false);
+    
+    return llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage, "record_sensitive_var", m.get());
+}
+
+
 // Find all sensitive variables
 std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
     std::vector<SensitiveVar> vars;
@@ -66,7 +83,7 @@ std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
                         std::string annotation = get_annotation_string(annotation_struct->getOperand(1));
                         if (annotation == "sensitive") {
                             if (auto *global_var = llvm::dyn_cast<llvm::GlobalVariable>(annotation_struct->getOperand(0))) {
-                                std::string name = global_var->hasName() ? global_var->getName().str() : "<unnamed>";
+                                std::string name = global_var->hasName() ? global_var->getName().str() : "<local>";
                                 vars.push_back({global_var, name, nullptr, true});
                                 log_print("Found global: " + name, false, Colors::MAGENTA);
                             }
@@ -89,7 +106,7 @@ std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
                             std::string annotation = get_annotation_string(ci->getOperand(1));
                             if (annotation == "sensitive") {
                                 llvm::Value *var = ci->getOperand(0);
-                                std::string name = var->hasName() ? var->getName().str() : "<unnamed>";
+                                std::string name = var->hasName() ? var->getName().str() : "<local>";
                                 vars.push_back({var, name, ci, false});
                                 log_print("Found local: " + name + " in " + f.getName().str(), false, Colors::MAGENTA);
                             }
@@ -111,7 +128,8 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
     }
 
     llvm::LLVMContext& context = m->getContext();
-    llvm::Function *printf_func = get_printf(m);
+    // llvm::Function *printf_func = get_printf(m);
+    llvm::Function *record_func = get_record_sensitive_var(m);
     
     for (const auto& var : vars) {
         if (var.isGlobal || !var.location) continue;
@@ -127,6 +145,7 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
             llvm::Type *var_type = var.variable->getType();
             uint64_t type_size;
             
+            // NB: I don't think this is completely accurate with stack/heap but idk
             if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(var.variable)) { // stack variable
                 var_type = ai->getAllocatedType();
                 type_size = m->getDataLayout().getTypeAllocSize(var_type);
@@ -138,40 +157,13 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
             }
             llvm::Value *size_val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_size);
             
-            llvm::Constant *format_str = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
+            // llvm::Constant *format_str = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
             llvm::Constant *name_str = builder.CreateGlobalString(var.name);
-            
-            builder.CreateCall(printf_func, {format_str, name_str, var_addr, size_val});
+
+            builder.CreateCall(record_func, {name_str, var_addr, size_val});
             log_print("- Instrumented: " + var.name + " (size: " + std::to_string(type_size) + " bytes)", false);
         }
     }
-}
-
-void declare_shadow_buffer(std::shared_ptr<llvm::Module> m) {
-    llvm::LLVMContext& context = m->getContext();
-    
-    // Create LLVM struct type equivalent to SensitiveVarInfo
-    // struct SensitiveVarInfo { void* ptr; size_t size; }
-    llvm::Type *void_ptr_ty = llvm::PointerType::get(context, 0);
-    llvm::Type *size_t_ty = llvm::Type::getInt64Ty(context); // Assuming 64-bit size_t
-    
-    std::vector<llvm::Type*> struct_elements = {void_ptr_ty, size_t_ty};
-    llvm::StructType *sensitive_var_info_ty = llvm::StructType::create(context, struct_elements, "SensitiveVarInfo");
-    
-    // Calculate how many SensitiveVarInfo structs fit in SHADOW_BUFFER_SIZE
-    uint64_t struct_size = m->getDataLayout().getTypeAllocSize(sensitive_var_info_ty);
-    uint64_t num_entries = SHADOW_BUFFER_SIZE / struct_size;
-    
-    llvm::ArrayType *shadow_array_ty = llvm::ArrayType::get(sensitive_var_info_ty, num_entries);
-    
-    // Initialize as zero (BSS) - will be populated at runtime
-    llvm::Constant *array_initializer = llvm::ConstantAggregateZero::get(shadow_array_ty);
-    
-    new llvm::GlobalVariable(*m, shadow_array_ty, false, llvm::GlobalValue::ExternalLinkage, array_initializer, "shadow_buffer");
-
-    log_print("Declared shadow buffer with " + std::to_string(num_entries) + 
-              " SensitiveVarInfo entries (struct size: " + std::to_string(struct_size) + 
-              " bytes, total: " + std::to_string(num_entries * struct_size) + " bytes) - zero-initialized for runtime population");
 }
 
 // === PIPELINE FUNCTIONS ===
@@ -218,8 +210,6 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
 bool inject_instrumentation(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
     log_print("[STEP 3] Injecting instrumentation...", false, Colors::BOLD + Colors::BLUE);
     
-    declare_shadow_buffer(m);
-    
     // auto vars = find_sensitive_vars(m.get());
     instrument_vars(m, vars);
     
@@ -238,7 +228,9 @@ bool inject_instrumentation(const std::string& input_file, const std::string& ou
 // Step 4: Build final executable
 bool build_executable(const std::string& bitcode_file, const std::string& executable_file) {
     log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = "clang -g -O0 " + bitcode_file + " -o " + executable_file;
+
+    // I'm building this with no optimization for now! Make sure to update this later for benchmarking.
+    std::string cmd = "clang -g -O0 " + bitcode_file + " runtime_helpers.c -o " + executable_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to build executable", true);
         return false;
