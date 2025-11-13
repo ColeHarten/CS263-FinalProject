@@ -111,39 +111,38 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
     }
 
     llvm::LLVMContext& context = m->getContext();
-    
     llvm::Function *printf_func = get_printf(m);
     
     for (const auto& var : vars) {
-        if (var.isGlobal) continue;
+        if (var.isGlobal || !var.location) continue;
         
-        if (var.location) {
-            llvm::IRBuilder<> builder(context);
-            if (llvm::Instruction *insert_point = var.location->getNextNode()) {
-                builder.SetInsertPoint(insert_point);
-                
-                llvm::Type *void_ptr_ty = llvm::PointerType::get(context, 0);
-                llvm::Value *var_addr = builder.CreateBitCast(var.variable, void_ptr_ty, "var_addr");
-                
-                llvm::Type *var_type = var.variable->getType();
-                uint64_t type_size;
-                
-                if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(var.variable)) {
-                    var_type = ai->getAllocatedType();
-                    type_size = m->getDataLayout().getTypeAllocSize(var_type);
-                } else if (var_type->isPointerTy()) {
-                    type_size = m->getDataLayout().getPointerSize();
-                } else {
-                    type_size = m->getDataLayout().getTypeAllocSize(var_type);
-                }
-                llvm::Value *size_val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_size);
-                
-                llvm::Constant *format_str = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
-                llvm::Constant *name_str = builder.CreateGlobalString(var.name);
-                
-                builder.CreateCall(printf_func, {format_str, name_str, var_addr, size_val});
-                log_print("- Instrumented: " + var.name + " (size: " + std::to_string(type_size) + " bytes)", false);
+        llvm::IRBuilder<> builder(context);
+        if (llvm::Instruction *insert_point = var.location->getNextNode()) { // location rt after the sensitive variables declaration
+            builder.SetInsertPoint(insert_point);
+            
+            llvm::Type *void_ptr_ty = llvm::PointerType::get(context, 0);
+            llvm::Value *var_addr = builder.CreateBitCast(var.variable, void_ptr_ty, "var_addr");
+            
+            // Handle stack and heap variables differently for size calculation
+            llvm::Type *var_type = var.variable->getType();
+            uint64_t type_size;
+            
+            if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(var.variable)) { // stack variable
+                var_type = ai->getAllocatedType();
+                type_size = m->getDataLayout().getTypeAllocSize(var_type);
+            } else if (var_type->isPointerTy()) { // heap variable
+                type_size = m->getDataLayout().getPointerSize();
+            } else { 
+                assert(false); // prolly shouldn't get here?
+                // type_size = m->getDataLayout().getTypeAllocSize(var_type);
             }
+            llvm::Value *size_val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_size);
+            
+            llvm::Constant *format_str = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
+            llvm::Constant *name_str = builder.CreateGlobalString(var.name);
+            
+            builder.CreateCall(printf_func, {format_str, name_str, var_addr, size_val});
+            log_print("- Instrumented: " + var.name + " (size: " + std::to_string(type_size) + " bytes)", false);
         }
     }
 }
