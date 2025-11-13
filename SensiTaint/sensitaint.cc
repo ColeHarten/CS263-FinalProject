@@ -238,7 +238,7 @@ bool inject_instrumentation(const std::string& input_file, const std::string& ou
 // Step 4: Build final executable
 bool build_executable(const std::string& bitcode_file, const std::string& executable_file) {
     log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = "clang " + bitcode_file + " -o " + executable_file;
+    std::string cmd = "clang -g -O0 " + bitcode_file + " -o " + executable_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to build executable", true);
         return false;
