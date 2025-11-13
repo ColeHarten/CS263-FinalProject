@@ -12,7 +12,7 @@ int main() {
 
 
     // trigger a core dump
-    // raise(SIGSEGV);
+    raise(SIGSEGV);
 
     return 0;
 }

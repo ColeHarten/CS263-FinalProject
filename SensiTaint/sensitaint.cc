@@ -230,7 +230,7 @@ bool build_executable(const std::string& bitcode_file, const std::string& execut
     log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
 
     // I'm building this with no optimization for now! Make sure to update this later for benchmarking.
-    std::string cmd = "clang -g -O0 " + bitcode_file + " runtime_helpers.c -o " + executable_file;
+    std::string cmd = "clang -O0 " + bitcode_file + " runtime_helpers.c -o " + executable_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to build executable", true);
         return false;
