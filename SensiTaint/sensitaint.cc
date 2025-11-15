@@ -22,6 +22,15 @@
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IRReader/IRReader.h"
 
+/*
+*   This is the program to take in the client C program, inject code to record sensitive
+*   variables at runtime in a shadow buffer, install signal handlers to santize the core 
+*   dump and then generate an executable file. 
+*
+*   There is a lot of really nasty parsing logic here. 
+*   Here is the docs for the LLVM parser: https://llvm.org/docs/GettingStarted.html
+*/
+
 // Extract annotation string from LLVM value
 std::string get_annotation_string(llvm::Value* ptr) {
     if (auto *gv = llvm::dyn_cast<llvm::GlobalVariable>(ptr)) {
@@ -167,6 +176,13 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
 }
 
 // === PIPELINE FUNCTIONS ===
+// These are the functions that run the program. I tried to break it up into a clean-ish
+// 5-step pipeline:
+//      1) Generate basic bytecode from source
+//      2) Parse module and identify all sensitive variables
+//      3) Inject instructions for sensitive variables
+//      4) Build final executable
+//      5) Clean up temporary files
 
 // Step 1: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
@@ -206,9 +222,9 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
     return vars;
 }
 
-// Step 3: Inject instrumentation for sensitive variables
-bool inject_instrumentation(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
-    log_print("[STEP 3] Injecting instrumentation...", false, Colors::BOLD + Colors::BLUE);
+// Step 3: Inject instructions for sensitive variables
+bool inject_instructions(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
+    log_print("[STEP 3] Injecting instructions...", false, Colors::BOLD + Colors::BLUE);
     
     instrument_vars(m, vars);
     
@@ -278,8 +294,8 @@ int main(int argc, char *argv[]) {
     }
     log_print("");
 
-    // 3: Inject instrumentation
-    if (!inject_instrumentation(temp_bitcode, modified_bitcode, vars, m)) {
+    // 3: Inject instructions
+    if (!inject_instructions(temp_bitcode, modified_bitcode, vars, m)) {
         return 1;
     }
     log_print("");

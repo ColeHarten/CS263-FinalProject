@@ -3,6 +3,9 @@
 
 #include <string>
 
+#include "llvm/IR/Value.h"
+
+
 // ANSI color codes
 namespace Colors {
     const std::string RESET = "\033[0m";
@@ -17,7 +20,6 @@ namespace Colors {
 }
 
 void log_print(const std::string& str, bool error = false, const std::string& color = "");
-
 bool run_command(const std::string& cmd);
 
 #endif
