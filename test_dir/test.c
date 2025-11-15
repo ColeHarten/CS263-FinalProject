@@ -5,11 +5,10 @@ sensitive int glob = 10;
 
 int main() {
 
-    sensitive int x = 5;
-    sensitive int y = 5;
+    volatile sensitive int x = 0xfeedbeef;
+    volatile int y = 0xbeeffeed;
 
     int z = 10;
-
 
     // trigger a core dump
     raise(SIGSEGV);

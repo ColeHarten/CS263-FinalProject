@@ -171,7 +171,7 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
 // Step 1: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
     log_print("[STEP 1] Generating bytecode from source...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = "clang -O0 -emit-llvm -c " + source_file + " -o " + bitcode_file;
+    std::string cmd = "clang -O0 -g3 -gdwarf-4 -emit-llvm -c " + source_file + " -o " + bitcode_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to generate bytecode", true);
         return false;
@@ -229,8 +229,8 @@ bool inject_instrumentation(const std::string& input_file, const std::string& ou
 bool build_executable(const std::string& bitcode_file, const std::string& executable_file) {
     log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
 
-    // I'm building this with no optimization for now! Make sure to update this later for benchmarking.
-    std::string cmd = "clang -O0 " + bitcode_file + " runtime_helpers.c -o " + executable_file;
+    // Build with comprehensive debug info and no optimization
+    std::string cmd = "clang -O0 -g3 -gdwarf-4 -fno-omit-frame-pointer " + bitcode_file + " runtime_helpers.c -o " + executable_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to build executable", true);
         return false;
