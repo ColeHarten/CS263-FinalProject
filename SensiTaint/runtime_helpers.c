@@ -36,7 +36,7 @@ static void crash_handler(int sig, siginfo_t *si, void *unused) {
         struct SensitiveVarInfo *iter = &shadow_buffer[i];
 
         printf("[CRASH]: Sanitizing %zu bytes at address %p\n", iter->sz, iter->ptr);
-        memset(iter->ptr, 0xcc, iter->sz); 
+        memset(iter->ptr, 0, iter->sz); 
     }
     
     printf("[CRASH]: Sanitization complete. Triggering core dump...\n");
@@ -56,7 +56,7 @@ void install_handler() {
     sigemptyset(&sa.sa_mask);
     sa.sa_sigaction = crash_handler;
     
-    // Install handler for multiple crash signals
+    // Install handlers
     if (sigaction(SIGSEGV, &sa, NULL) == -1) {
         perror("sigaction SIGSEGV");
         exit(EXIT_FAILURE);

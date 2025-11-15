@@ -38,20 +38,20 @@ std::string get_annotation_string(llvm::Value* ptr) {
     return "";
 }
 
-// Get or create printf function
-llvm::Function* get_printf(std::shared_ptr<llvm::Module> m) {
-    if (auto *printf_func = m->getFunction("printf")) {
-        return printf_func;
-    }
+// // Get or create printf function
+// llvm::Function* get_printf(std::shared_ptr<llvm::Module> m) {
+//     if (auto *printf_func = m->getFunction("printf")) {
+//         return printf_func;
+//     }
 
-    llvm::LLVMContext& context = m->getContext();
+//     llvm::LLVMContext& context = m->getContext();
     
-    // Create printf declaration  
-    llvm::Type *char_ptr_ty = llvm::PointerType::get(context, 0);
-    llvm::Type *int_ty = llvm::Type::getInt32Ty(context);
-    llvm::FunctionType *printf_type = llvm::FunctionType::get(int_ty, {char_ptr_ty}, true);
-    return llvm::Function::Create(printf_type, llvm::Function::ExternalLinkage, "printf", m.get());
-}
+//     // Create printf declaration  
+//     llvm::Type *char_ptr_ty = llvm::PointerType::get(context, 0);
+//     llvm::Type *int_ty = llvm::Type::getInt32Ty(context);
+//     llvm::FunctionType *printf_type = llvm::FunctionType::get(int_ty, {char_ptr_ty}, true);
+//     return llvm::Function::Create(printf_type, llvm::Function::ExternalLinkage, "printf", m.get());
+// }
 
 
 // Get the record_sensitive_var function, or declare it if not present
@@ -171,7 +171,7 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
 // Step 1: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
     log_print("[STEP 1] Generating bytecode from source...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = "clang -O0 -g3 -gdwarf-4 -emit-llvm -c " + source_file + " -o " + bitcode_file;
+    std::string cmd = "clang -O0 -emit-llvm -c " + source_file + " -o " + bitcode_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to generate bytecode", true);
         return false;
@@ -210,7 +210,6 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
 bool inject_instrumentation(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
     log_print("[STEP 3] Injecting instrumentation...", false, Colors::BOLD + Colors::BLUE);
     
-    // auto vars = find_sensitive_vars(m.get());
     instrument_vars(m, vars);
     
     std::error_code ec;
@@ -229,8 +228,8 @@ bool inject_instrumentation(const std::string& input_file, const std::string& ou
 bool build_executable(const std::string& bitcode_file, const std::string& executable_file) {
     log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
 
-    // Build with comprehensive debug info and no optimization
-    std::string cmd = "clang -O0 -g3 -gdwarf-4 -fno-omit-frame-pointer " + bitcode_file + " runtime_helpers.c -o " + executable_file;
+    // Build with no optimization
+    std::string cmd = "clang -O0 " + bitcode_file + " runtime_helpers.c -o " + executable_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to build executable", true);
         return false;

@@ -1,7 +1,6 @@
 #include "utils.hh"
 #include <iostream>
 
-// Log function for compile time (of client function)
 void log_print(const std::string& str, bool error, const std::string& color) {
     std::string prefix = Colors::CYAN + "[SENSITAINT]" + Colors::RESET + " ";
     
@@ -14,7 +13,6 @@ void log_print(const std::string& str, bool error, const std::string& color) {
     }
 }
 
-// Just to log commands for debugging
 bool run_command(const std::string& cmd) {
     log_print("Running command: " + cmd);
     int result = std::system(cmd.c_str());

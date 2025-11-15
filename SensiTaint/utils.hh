@@ -16,10 +16,8 @@ namespace Colors {
     const std::string BOLD = "\033[1m";
 }
 
-// Log function for compile time (of client function)
 void log_print(const std::string& str, bool error = false, const std::string& color = "");
 
-// Just to log commands for debugging
 bool run_command(const std::string& cmd);
 
-#endif // SENSITAINT_UTILS_HH
+#endif
