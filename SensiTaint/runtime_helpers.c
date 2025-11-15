@@ -7,6 +7,10 @@
 #include <signal.h>
 #include <string.h>
 
+/*
+*   This code gets compiled and linked into the executable and used at runtime.
+*/
+
 #define SHADOW_SIZE (1 << 20)
 
 struct SensitiveVarInfo {
@@ -14,9 +18,13 @@ struct SensitiveVarInfo {
     size_t sz;
 };
 
+// This is the shadow buffer that stores the active allocations. Rn it's just an array.
+// Maybe I should make it like a hash map? It's not initialized so prolly gets put in BSS.
 struct SensitiveVarInfo shadow_buffer[SHADOW_SIZE / sizeof(struct SensitiveVarInfo)];
 static size_t shadow_index = 0;
 
+// Calls to this function are injected in the LLVM code and are used to record the declaration
+// of variables that are marked sensitive.
 void record_sensitive_var(const char* name, void* ptr, size_t sz) {
     if (shadow_index < (SHADOW_SIZE / sizeof(struct SensitiveVarInfo))) {
         fprintf(stdout, "[RUNTIME] Tracking '%s' at %p, size: %zu bytes\n", name, ptr, sz);
@@ -28,6 +36,8 @@ void record_sensitive_var(const char* name, void* ptr, size_t sz) {
     }
 }
 
+// This is teh handler that we run at a crash. It just iterates through elements in teh
+// shadow buffer and memsets them to 0.
 static void crash_handler(int sig, siginfo_t *si, void *unused) {
     printf("[CRASH]: Signal %d received, sanitizing sensitive data...\n", sig);
     
@@ -48,6 +58,9 @@ static void crash_handler(int sig, siginfo_t *si, void *unused) {
 }
 
 
+// This function (marked with the `constructor` attribute) is run right before `main`. 
+// All it does is install the appropriate signal handlers. 
+// NB: One issue is that a malicious client could potentially undo these signal handlers?
 __attribute__((constructor)) 
 void install_handler() {
     struct sigaction sa;
