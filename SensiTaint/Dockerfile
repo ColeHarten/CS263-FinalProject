@@ -29,7 +29,10 @@ RUN apt-get update && apt-get install -y \
     gdb \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/include/llvm-18/llvm /usr/include/llvm \
-    && ln -s /usr/lib/llvm-18/include/clang /usr/include/clang
+    && ln -s /usr/lib/llvm-18/include/clang /usr/include/clang \
+    && ln -s /usr/bin/clang-18 /usr/bin/clang \
+    && ln -s /usr/bin/clang++-18 /usr/bin/clang++ \
+    && ln -s /usr/bin/llvm-config-18 /usr/bin/llvm-config
 
 # Create a non-root user
 RUN useradd -m -s /bin/bash dev && \
