@@ -1,0 +1,17 @@
+# Build artifacts
+sensitaint
+test_crash
+*.bc
+core.*
+
+# Temporary files
+*.tmp
+*.log
+
+# macOS specific files
+.DS_Store
+
+# Editor files
+*.swp
+*.swo
+*~

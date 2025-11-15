@@ -4,8 +4,8 @@
 CXX = g++
 
 # Path to LLVM build/install
-LLVM_PREFIX ?= $(HOME)/cs263/CS263-FinalProject/lib/llvm/install
-LLVM_CONFIG = $(LLVM_PREFIX)/bin/llvm-config
+LLVM_PREFIX ?= /usr
+LLVM_CONFIG = $(shell which llvm-config-18 || which llvm-config)
 
 # Source files
 SRC = $(wildcard *.cc)
@@ -27,4 +27,16 @@ $(TARGET): $(SRC)
 clean:
 	rm -f $(TARGET)
 
-.PHONY: all clean install-llvm
+# Docker targets
+docker-build:
+	docker build -t sensitaint .
+
+docker-run:
+	docker run -it --rm \
+		--ulimit core=-1 \
+		--security-opt seccomp=unconfined \
+		-v $(PWD)/..:/home/dev/CS263-FinalProject \
+		-w /home/dev/CS263-FinalProject/SensiTaint \
+		sensitaint
+
+.PHONY: all clean docker-build docker-run
