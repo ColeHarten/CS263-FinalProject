@@ -129,49 +129,119 @@ std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
     return vars;
 }
 
-// Insert logs for sensitive variables
-void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
-    if (vars.empty()) {
-        log_print("No variables to instrument", true);
-        return;
-    }
-
-    llvm::LLVMContext& context = m->getContext();
-    // llvm::Function *printf_func = get_printf(m);
-    llvm::Function *record_func = get_record_sensitive_var(m);
+// Helper function to find malloc calls that store into a given pointer
+std::vector<llvm::CallInst*> find_malloc_stores(llvm::Value* ptr) {
+    std::vector<llvm::CallInst*> mallocCalls;
     
-    for (const auto& var : vars) {
-        if (var.isGlobal || !var.location) continue;
-        
-        llvm::IRBuilder<> builder(context);
-        if (llvm::Instruction *insert_point = var.location->getNextNode()) { // location rt after the sensitive variables declaration
-            builder.SetInsertPoint(insert_point);
-            
-            llvm::Type *void_ptr_ty = llvm::PointerType::get(context, 0);
-            llvm::Value *var_addr = builder.CreateBitCast(var.variable, void_ptr_ty, "var_addr");
-            
-            // Handle stack and heap variables differently for size calculation
-            llvm::Type *var_type = var.variable->getType();
-            uint64_t type_size;
-            
-            // NB: I don't think this is completely accurate with stack/heap but idk
-            if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(var.variable)) { // stack variable
-                var_type = ai->getAllocatedType();
-                type_size = m->getDataLayout().getTypeAllocSize(var_type);
-            } else if (var_type->isPointerTy()) { // heap variable
-                type_size = m->getDataLayout().getPointerSize();
-            } else { 
-                assert(false); // prolly shouldn't get here?
-                // type_size = m->getDataLayout().getTypeAllocSize(var_type);
+    // Look for stores into this pointer
+    for (auto *user : ptr->users()) {
+        if (auto *store = llvm::dyn_cast<llvm::StoreInst>(user)) {
+            if (store->getPointerOperand() == ptr) {
+                llvm::Value *storedVal = store->getValueOperand();
+                
+                // Check if stored value is a malloc call
+                if (auto *call = llvm::dyn_cast<llvm::CallInst>(storedVal)) {
+                    if (auto *callee = call->getCalledFunction()) {
+                        if (callee->getName() == "malloc" || callee->getName() == "calloc" || 
+                            callee->getName() == "realloc") {
+                            mallocCalls.push_back(call);
+                        }
+                    }
+                }
             }
-            llvm::Value *size_val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_size);
-            
-            // llvm::Constant *format_str = builder.CreateGlobalString("[RUNTIME] Tracking '%s' at %p, size: %llu bytes\n");
-            llvm::Constant *name_str = builder.CreateGlobalString(var.name);
-
-            builder.CreateCall(record_func, {name_str, var_addr, size_val});
-            log_print("- Instrumented: " + var.name + " (size: " + std::to_string(type_size) + " bytes)", false);
         }
+    }
+    
+    return mallocCalls;
+}
+
+void instrument_vars(std::shared_ptr<llvm::Module> m,
+                     const std::vector<SensitiveVar>& vars) 
+{
+    llvm::Module &M = *m;
+    llvm::LLVMContext &Ctx = M.getContext();
+    const llvm::DataLayout &DL = M.getDataLayout();
+
+    llvm::Function *record = get_record_sensitive_var(m);
+
+    for (const auto &v : vars) {
+        if (v.isGlobal || !v.location) 
+            continue;
+
+        llvm::IRBuilder<> B(v.location->getNextNode());
+        llvm::Value *ptr = v.variable;
+
+        if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(ptr)) {
+            // Get the allocated type, not the pointer type
+            llvm::Type *allocatedType = ai->getAllocatedType();
+            
+            // Check if this is a pointer type that might point to heap memory
+            if (allocatedType->isPointerTy()) {
+                auto mallocCalls = find_malloc_stores(ptr);
+                
+                bool instrumentedHeap = false;
+                for (auto *mallocCall : mallocCalls) {
+                    // Find the store instruction that stores this malloc result
+                    for (auto *user : mallocCall->users()) {
+                        if (auto *store = llvm::dyn_cast<llvm::StoreInst>(user)) {
+                            if (store->getPointerOperand() == ptr) {
+                                // Instrument the heap allocation
+                                llvm::IRBuilder<> heapB(store->getNextNode());
+                                
+                                llvm::Value *heapAddr = heapB.CreateBitCast(
+                                    mallocCall, llvm::PointerType::get(Ctx, 0)
+                                );
+                                
+                                llvm::Value *heapSize;
+                                if (mallocCall->getCalledFunction()->getName() == "calloc") {
+                                    // calloc(num, size) - multiply arguments
+                                    llvm::Value *num = mallocCall->getArgOperand(0);
+                                    llvm::Value *size = mallocCall->getArgOperand(1);
+                                    heapSize = heapB.CreateMul(num, size);
+                                } else {
+                                    // Default to using first argument
+                                    heapSize = mallocCall->getArgOperand(0);
+                                }
+                                
+                                llvm::Value *heapNameStr = heapB.CreateGlobalStringPtr(v.name + "_heap");
+                                heapB.CreateCall(record, {heapNameStr, heapAddr, heapSize});
+                                
+                                instrumentedHeap = true;
+                                log_print("- Instrumented heap allocation");
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (!instrumentedHeap) {
+                    log_print("[WARN] No heap allocation found for pointer: " + v.name);
+                }
+            } else {
+                // Regular stack variable (not a pointer)
+                uint64_t size = DL.getTypeAllocSize(allocatedType);
+
+                llvm::Value *addr = B.CreateBitCast(
+                    ai, llvm::PointerType::get(Ctx, 0)
+                );
+                llvm::Value *sizeVal = llvm::ConstantInt::get(
+                    llvm::Type::getInt64Ty(Ctx), size
+                );
+                llvm::Value *nameStr = B.CreateGlobalStringPtr(v.name);
+                B.CreateCall(record, {nameStr, addr, sizeVal});
+
+                log_print("- Instrumented stack allocation");
+            }
+            continue;
+        }
+
+        /*
+        *   HERE IS MAYBE WHERE WE SHOULD HANDLE NON-ALLOCATION TAINT PROPOGATION SOMEHOW
+        *   IT MAY ALSO BE BE BETTER TO DO THIS IN THE `find_sensitive_vars` FUNCTION
+        */
+        
+        // If no specific case matched, log the error
+        log_print("[ERROR]: Could not instrument variable " + v.name + " - unsupported pattern", true);
     }
 }
 

@@ -39,4 +39,22 @@ docker-run:
 		-w /home/dev/CS263-FinalProject/SensiTaint \
 		sensitaint
 
-.PHONY: all clean docker-build docker-run
+# Test target - usage: make test BYTES=0xbeeffeed
+test:
+	@if [ -z "$(BYTES)" ]; then \
+		echo "Usage: make test BYTES=<hex_value>"; \
+		echo "Example: make test BYTES=0xbeeffeed"; \
+		exit 1; \
+	fi
+	@echo "Running test with bytes: $(BYTES)"
+	@echo "Cleaning and building..."
+	$(MAKE) clean
+	$(MAKE)
+	@echo "Running sensitaint on test.c..."
+	./sensitaint ../test_dir/test.c test
+	@echo "Executing instrumented test binary..."
+	./test || true
+	@echo "Scanning core dump for bytes: $(BYTES)"
+	python3 ../test_dir/scan_core.py core $(BYTES)
+
+.PHONY: all clean docker-build docker-run test

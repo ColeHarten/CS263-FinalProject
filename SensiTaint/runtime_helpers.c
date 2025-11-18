@@ -25,7 +25,7 @@ static size_t shadow_index = 0;
 
 // Calls to this function are injected in the LLVM code and are used to record the declaration
 // of variables that are marked sensitive.
-void record_sensitive_var(const char* name, void* ptr, size_t sz) {
+void record_sensitive_var(const char* name, void* ptr, size_t sz, int ptr_depth) {
     if (shadow_index < (SHADOW_SIZE / sizeof(struct SensitiveVarInfo))) {
         fprintf(stdout, "[RUNTIME] Tracking '%s' at %p, size: %zu bytes\n", name, ptr, sz);
         shadow_buffer[shadow_index].ptr = ptr;
