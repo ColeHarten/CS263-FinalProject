@@ -155,9 +155,7 @@ std::vector<llvm::CallInst*> find_malloc_stores(llvm::Value* ptr) {
     return mallocCalls;
 }
 
-void instrument_vars(std::shared_ptr<llvm::Module> m,
-                     const std::vector<SensitiveVar>& vars) 
-{
+void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
     const llvm::DataLayout &DL = M.getDataLayout();
@@ -233,6 +231,8 @@ void instrument_vars(std::shared_ptr<llvm::Module> m,
                 log_print("- Instrumented stack allocation");
             }
             continue;
+        } else {
+            assert(false);
         }
 
         /*
@@ -315,7 +315,7 @@ bool build_executable(const std::string& bitcode_file, const std::string& execut
     log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
 
     // Build with no optimization
-    std::string cmd = "clang -O0 " + bitcode_file + " runtime_helpers.c -o " + executable_file;
+    std::string cmd = "clang -O0 " + bitcode_file + " runtime/runtime_helpers.c runtime/hashmap.c -o " + executable_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to build executable", true);
         return false;

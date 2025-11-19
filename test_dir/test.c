@@ -5,15 +5,34 @@
 
 // sensitive int glob = 10;
 
-int main() {
+// int mult(int a, int b) {
+//     sensitive int ret = a * b;
+//     return ret;
+// }
 
+struct test {
+    int x_;
+    int y_;
+};
+
+int main() {
     volatile sensitive int x = 0xfeedbeef;
+    printf("Address of `x`: %p\n", &x);
+
     volatile int y = 0xbeeffeed;
 
-    volatile int *z = malloc(4);
+    volatile sensitive int *z = malloc(4);
     *z = 0xdeadbeef;
+    
+    // struct test t;
+    // t.x_ = x;
+    // t.y_ = y;
 
-    printf("Address of `z`: %p\n",z);
+    // int w = x;
+
+    // int q = x + 1;
+
+    // int k = mult(x, 10);
 
     // trigger a core dump
     raise(SIGSEGV);
