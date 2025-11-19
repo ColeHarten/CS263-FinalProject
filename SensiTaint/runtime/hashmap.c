@@ -22,7 +22,7 @@ static inline uint32_t hash_ptr(uint64_t ptr) {
 SensitiveMap *hm_init(void *buffer) {
     SensitiveMap *mp = (SensitiveMap *)buffer;
     memset(buffer, 0, SHADOW_BUFFER_SIZE);
-    mp->count = 0;  // Explicitly initialize count
+    mp->count = 0;
 
     return mp;
 }
@@ -44,9 +44,9 @@ static SensitiveVarInfo *probe(SensitiveMap *mp, uint64_t ptr, int find_empty) {
         if (e->ptr == ptr)   // if we found the value, return it
             return e;
         hsh = (hsh + 1) % CAP;
-    } while (hsh != start);  // prevent infinite loop
+    } while (hsh != start); 
 
-    return NULL;  // table is full or not found
+    return NULL;
 }
 
 int hm_insert(SensitiveMap *mp, uint64_t ptr, uint64_t sz) {
