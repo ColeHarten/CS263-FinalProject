@@ -55,7 +55,6 @@ static void crash_handler(int sig, siginfo_t *si, void *unused) {
 // NB: One issue is that a malicious client could potentially undo these signal handlers?
 __attribute__((constructor)) 
 void initialize_sensitaint() {
-
     // initialize our hashmap
     sensimap = hm_init(shadow_buffer);
 

@@ -1,5 +1,6 @@
 #include "hashmap.h"
 #include <string.h>
+#include <assert.h>
 
 /*
 *   This is just a pretty standard implementation of an open-addressed hashmap.
@@ -9,6 +10,7 @@
 *   more efficient implementation using a shadow stack for the stack variables.
 */
 
+// This macro defines the number of elements can fit in the hashmap
 #define CAP ((SHADOW_BUFFER_SIZE - sizeof(uint32_t))/ sizeof(SensitiveVarInfo))
 
 static inline uint32_t hash_ptr(uint64_t ptr) {
@@ -27,7 +29,7 @@ SensitiveMap *hm_init(void *buffer) {
     return mp;
 }
 
-// linear probing! (maybe quad-hashing is better?)
+// linear probing! (maybe quad or double-hashing is better?)
 static SensitiveVarInfo *probe(SensitiveMap *mp, uint64_t ptr, int find_empty) {
     uint32_t hsh = hash_ptr(ptr) % CAP;
     uint32_t start = hsh;

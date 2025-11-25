@@ -3,26 +3,26 @@
 #include <stdio.h>
 #include "sensitive.h"
 
-// sensitive int glob = 10;
 
-// int mult(int a, int b) {
-//     sensitive int ret = a * b;
-//     return ret;
-// }
+void func() {
+    sensitive volatile int x = 0xfeedbeef;
 
-struct test {
-    int x_;
-    int y_;
-};
+    raise(SIGSEGV);
+}
+
+// struct test {
+//     int x_;
+//     int y_;
+// };
 
 int main() {
-    volatile sensitive int x = 0xfeedbeef;
-    printf("Address of `x`: %p\n", &x);
+    // volatile sensitive int x = 0xfeedbeef;
+    // printf("Address of `x`: %p\n", &x);
 
-    volatile int y = 0xbeeffeed;
+    // volatile int y = 0xbeeffeed;
 
-    volatile sensitive int *z = malloc(4);
-    *z = 0xdeadbeef;
+    // volatile sensitive int *z = malloc(4);
+    // *z = 0xdeadbeef;
     
     // struct test t;
     // t.x_ = x;
@@ -32,7 +32,7 @@ int main() {
 
     // int q = x + 1;
 
-    // int k = mult(x, 10);
+    func();
 
     // trigger a core dump
     raise(SIGSEGV);

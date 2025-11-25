@@ -15,6 +15,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Casting.h"
@@ -47,22 +48,6 @@ std::string get_annotation_string(llvm::Value* ptr) {
     return "";
 }
 
-// // Get or create printf function
-// llvm::Function* get_printf(std::shared_ptr<llvm::Module> m) {
-//     if (auto *printf_func = m->getFunction("printf")) {
-//         return printf_func;
-//     }
-
-//     llvm::LLVMContext& context = m->getContext();
-    
-//     // Create printf declaration  
-//     llvm::Type *char_ptr_ty = llvm::PointerType::get(context, 0);
-//     llvm::Type *int_ty = llvm::Type::getInt32Ty(context);
-//     llvm::FunctionType *printf_type = llvm::FunctionType::get(int_ty, {char_ptr_ty}, true);
-//     return llvm::Function::Create(printf_type, llvm::Function::ExternalLinkage, "printf", m.get());
-// }
-
-
 // Get the record_sensitive_var function, or declare it if not present
 llvm::Function* get_record_sensitive_var(std::shared_ptr<llvm::Module> m) {
     if (auto *f = m->getFunction("record_sensitive_var"))
@@ -77,7 +62,6 @@ llvm::Function* get_record_sensitive_var(std::shared_ptr<llvm::Module> m) {
     
     return llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage, "record_sensitive_var", m.get());
 }
-
 
 // Find all sensitive variables
 std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
@@ -226,8 +210,9 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
                     llvm::Type::getInt64Ty(Ctx), size
                 );
                 llvm::Value *nameStr = B.CreateGlobalStringPtr(v.name);
-                B.CreateCall(record, {nameStr, addr, sizeVal});
 
+                B.CreateCall(record, {nameStr, addr, sizeVal});
+                
                 log_print("- Instrumented stack allocation");
             }
             continue;
