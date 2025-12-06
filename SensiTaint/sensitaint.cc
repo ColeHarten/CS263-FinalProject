@@ -493,6 +493,19 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
                 }
             }
         }
+        log_print("[PhASAR] Total facts found: " + std::to_string(total_facts));
+        log_print("[PhASAR] Analysis complete! Found " + std::to_string(derived_vars.size()) + 
+                  " derived sensitive variables", false, Colors::GREEN);
+        
+    } catch (const std::exception& e) {
+        log_print("[PhASAR ERROR] " + std::string(e.what()), true);
+    }
+    
+    // clean temp phasar bitcode file
+    std::remove(phasar_bc.c_str());
+    
+    return derived_vars;
+}
 
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
