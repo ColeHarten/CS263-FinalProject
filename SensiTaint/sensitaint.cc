@@ -263,6 +263,24 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
     
     log_print("[PhASAR] Injected " + std::to_string(markers_injected) + " marker calls, saved to " + phasar_bc);
 
+    // Map to track phasar allocas to original module allocas
+    std::map<std::pair<std::string, int>, llvm::AllocaInst*> original_allocas_by_position;
+    
+    for (auto &F : *original_module) {
+        int alloca_idx = 0;
+        for (auto &BB : F) {
+            for (auto &I : BB) {
+                if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+                    std::string func_name = F.getName().str();
+                    original_allocas_by_position[{func_name, alloca_idx}] = AI;
+                    alloca_idx++;
+                }
+            }
+        }
+    }
+    
+    log_print("[PhASAR] Starting taint propagation analysis...", false, Colors::BOLD + Colors::CYAN);
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
