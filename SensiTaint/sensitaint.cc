@@ -306,21 +306,21 @@ bool preprocess_source(const std::string& source_file, std::string& preprocessed
     return true;
 }
 
-// Step 1: Generate basic bytecode from source
+// Step 2: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
-    log_print("[STEP 1] Generating bytecode from source...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 2] Generating bytecode from source...", false, Colors::BOLD + Colors::BLUE);
     std::string cmd = "clang -O0 -emit-llvm -c " + source_file + " -o " + bitcode_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to generate bytecode", true);
         return false;
     }
-    log_print("[STEP 1] Successfully generated: " + bitcode_file, false, Colors::GREEN);
+    log_print("[STEP 2] Successfully generated: " + bitcode_file, false, Colors::GREEN);
     return true;
 }
 
-// Step 2: Parse module and identify all sensitive variables
+// Step 3: Parse module and identify all sensitive variables
 std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_file, std::shared_ptr<llvm::Module>& m) {
-    log_print("[STEP 2] Identifying sensitive variables...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 3] Identifying sensitive variables...", false, Colors::BOLD + Colors::BLUE);
 
     static llvm::LLVMContext context;
     static llvm::SMDiagnostic err;
@@ -332,11 +332,11 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
         err.print("sensitaint", llvm::errs());
         return {};
     } else {
-        log_print("[STEP 2] Successfully parsed bitcode: " + bitcode_file, false, Colors::GREEN);
+        log_print("[STEP 3] Successfully parsed bitcode: " + bitcode_file, false, Colors::GREEN);
     }
     
     auto vars = find_sensitive_vars(m);
-    log_print("[STEP 2] Found " + std::to_string(vars.size()) + " sensitive variables:", false, Colors::GREEN);
+    log_print("[STEP 3] Found " + std::to_string(vars.size()) + " sensitive variables:", false, Colors::GREEN);
     for (const auto& var : vars) {
         log_print("  - " + var.name + " (" + (var.isGlobal ? "global" : "local") + ")");
     }
@@ -344,9 +344,9 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
     return vars;
 }
 
-// Step 3: Inject instructions for sensitive variables
+// Step 4: Inject instructions for sensitive variables
 bool inject_instructions(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
-    log_print("[STEP 3] Injecting instructions...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 4] Injecting instructions...", false, Colors::BOLD + Colors::BLUE);
     
     instrument_vars(m, vars);
     
@@ -358,13 +358,13 @@ bool inject_instructions(const std::string& input_file, const std::string& outpu
     }
     
     WriteBitcodeToFile(*m, out);
-    log_print("[STEP 3] Successfully instrumented and wrote: " + output_file, false, Colors::GREEN);
+    log_print("[STEP 4] Successfully instrumented and wrote: " + output_file, false, Colors::GREEN);
     return true;
 }
 
-// Step 4: Build final executable
+// Step 5: Build final executable
 bool build_executable(const std::string& bitcode_file, const std::string& executable_file) {
-    log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 5] Building final executable...", false, Colors::BOLD + Colors::BLUE);
 
     // Build with no optimization
     std::string cmd = "clang -O0 " + bitcode_file + " runtime/runtime_helpers.c runtime/hashmap.c -o " + executable_file;
@@ -372,19 +372,19 @@ bool build_executable(const std::string& bitcode_file, const std::string& execut
         log_print("[ERROR] Failed to build executable", true);
         return false;
     }
-    log_print("[STEP 4] Successfully built executable: " + executable_file, false, Colors::GREEN);
+    log_print("[STEP 5] Successfully built executable: " + executable_file, false, Colors::GREEN);
     return true;
 }
 
-// Step 5: Clean up temporary files
+// Step 6: Clean up temporary files
 void cleanup_temp_files(const std::vector<std::string>& temp_files) {
-    log_print("[STEP 5] Cleaning up temporary files...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 6] Cleaning up temporary files...", false, Colors::BOLD + Colors::BLUE);
     for (const auto& file : temp_files) {
         std::string cmd = "rm -f " + file;
         run_command(cmd);
         log_print("  - Removed: " + file);
     }
-    log_print("[STEP 5] Cleanup complete");
+    log_print("[STEP 6] Cleanup complete");
 }
 
 int main(int argc, char *argv[]) {
