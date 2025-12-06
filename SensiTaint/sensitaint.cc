@@ -249,12 +249,62 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
 
 // === PIPELINE FUNCTIONS ===
 // These are the functions that run the program. I tried to break it up into a clean-ish
-// 5-step pipeline:
-//      1) Generate basic bytecode from source
-//      2) Parse module and identify all sensitive variables
-//      3) Inject instructions for sensitive variables
-//      4) Build final executable
-//      5) Clean up temporary files
+// 6-step pipeline:
+//      1) Transform sensitive keyword into annotations
+//      2) Generate basic bytecode from source
+//      3) Parse module and identify all sensitive variables
+//      4) Inject instructions for sensitive variables
+//      5) Build final executable
+//      6) Clean up temporary files
+
+// Step 1: Transform sensitive keyword into annotations for phasar
+bool preprocess_source(const std::string& source_file, std::string& preprocessed_file) {
+    log_print("[STEP 1] Transforming sensitive keyword to annotations...", false, Colors::BOLD + Colors::BLUE);
+    
+    std::ifstream infile(source_file);
+    if (!infile.is_open()) {
+        log_print("[ERROR] Failed to open source file: " + source_file, true);
+        return false;
+    }
+    
+    std::string content((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+    infile.close();
+    
+    // regex for 'sensitive <type>' -> '<type> __attribute__((annotate("sensitive")))'
+    // I AI-generated this regex so it might not work in every case, def should revist
+    // if we have problems later with injecting annotations
+    std::regex sensitive_regex(R"(\bsensitive\s+([a-zA-Z_][a-zA-Z0-9_]*\s*\*?)\s+([a-zA-Z_][a-zA-Z0-9_]*))");
+    std::string transformed = std::regex_replace(content, sensitive_regex, 
+        R"($1 __attribute__((annotate("sensitive"))) $2)");
+    
+    size_t count = 0;
+    std::sregex_iterator it(content.begin(), content.end(), sensitive_regex);
+    std::sregex_iterator end;
+    while (it != end) {
+        count++;
+        ++it;
+    }
+    
+    if (count > 0) {
+        log_print("Transformed " + std::to_string(count) + " sensitive keywords into annotations");
+        
+        preprocessed_file = source_file + ".preprocessed.c";
+        std::ofstream outfile(preprocessed_file);
+        if (!outfile.is_open()) {
+            log_print("[ERROR] Failed to create preprocessed file", true);
+            return false;
+        }
+        outfile << transformed;
+        outfile.close();
+        
+        log_print("[STEP 1] Preprocessed file created: " + preprocessed_file, false, Colors::GREEN);
+    } else {
+        log_print("No sensitive keywords found, using original file");
+        preprocessed_file = source_file;
+    }
+    
+    return true;
+}
 
 // Step 1: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
