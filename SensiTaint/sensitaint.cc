@@ -796,8 +796,12 @@ int main(int argc, char *argv[]) {
     }
     log_print("");
 
-    // 6: Clean up temporary files (temporarily disabled for debugging)
-    cleanup_temp_files({temp_bitcode, modified_bitcode});
+    // 6: Clean up temporary files
+    std::vector<std::string> temp_files_to_remove = {temp_bitcode, modified_bitcode};
+    if (preprocessed_file != source_file) {
+        temp_files_to_remove.push_back(preprocessed_file);
+    }
+    cleanup_temp_files(temp_files_to_remove);
 
     log_print("\n=== Pipeline Complete ===", false, Colors::BOLD + Colors::GREEN);
     log_print("Instrumented executable created: " + exec_file);
