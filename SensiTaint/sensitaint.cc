@@ -759,13 +759,20 @@ int main(int argc, char *argv[]) {
     log_print("=== SensiTaint Instrumentation Pipeline ===", false, Colors::BOLD + Colors::CYAN);
     log_print("Source: " + source_file + " -> Executable: " + exec_file);
 
-    // 1: Generate bytecode
+    // 1: Transform sensitive keyword to annotation
+    std::string preprocessed_file;
+    if (!preprocess_source(source_file, preprocessed_file)) {
+        return 1;
+    }
+    log_print("");
+
+    // 2: Generate bytecode
     if (!generate_bytecode(source_file, temp_bitcode)) {
         return 1;
     }
     log_print("");
 
-    // 2: Parse module and identify all sensitive variables    
+    // 3: Parse module and identify all sensitive variables    
     std::shared_ptr<llvm::Module> m;
     
     std::vector<SensitiveVar> vars = identify_sensitive_vars(temp_bitcode, m);
@@ -774,19 +781,19 @@ int main(int argc, char *argv[]) {
     }
     log_print("");
 
-    // 3: Inject instructions
+    // 4: Inject instructions
     if (!inject_instructions(temp_bitcode, modified_bitcode, vars, m)) {
         return 1;
     }
     log_print("");
     
-    // 4: Build final executable
+    // 5: Build final executable
     if (!build_executable(modified_bitcode, exec_file)) {
         return 1;
     }
     log_print("");
 
-    // 5: Clean up temporary files (temporarily disabled for debugging)
+    // 6: Clean up temporary files (temporarily disabled for debugging)
     cleanup_temp_files({temp_bitcode, modified_bitcode});
 
     log_print("\n=== Pipeline Complete ===", false, Colors::BOLD + Colors::GREEN);
