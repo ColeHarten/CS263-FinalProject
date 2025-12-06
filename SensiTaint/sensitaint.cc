@@ -389,6 +389,111 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
                         if (seen_values.count(Fact)) continue;
                         seen_values.insert(Fact);
 
+                        // Check if this is an alloca instruction which would be a stack var
+                        if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(Fact)) {
+                            if (!tainted_allocs.count(AI)) {
+                                tainted_allocs.insert(AI);
+                                
+                                // Map back to original module by position
+                                std::string func_name = AI->getFunction() ? AI->getFunction()->getName().str() : "";
+                                
+                                int alloca_idx = 0;
+                                bool found = false;
+                                for (auto &BB : *AI->getFunction()) {
+                                    for (auto &I : BB) {
+                                        if (auto *CurAI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+                                            if (CurAI == AI) {
+                                                found = true;
+                                                break;
+                                            }
+                                            alloca_idx++;
+                                        }
+                                    }
+                                    if (found) break;
+                                }
+                                
+                                auto key = std::make_pair(func_name, alloca_idx);
+                                if (original_allocas_by_position.count(key)) {
+                                    llvm::AllocaInst *original_ai = original_allocas_by_position[key];
+                                    
+                                    bool is_explicit = false;
+                                    for (const auto& evar : explicit_vars) {
+                                        if (evar.variable == original_ai) {
+                                            is_explicit = true;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if (!is_explicit) {
+                                        SensitiveVar derived_var;
+                                        derived_var.variable = original_ai;
+                                        derived_var.location = original_ai;
+                                        derived_var.isGlobal = false;
+                                        derived_var.name = original_ai->hasName() ? original_ai->getName().str() : ("<derived_" + std::to_string(alloca_idx) + ">");
+                                        
+                                        derived_vars.push_back(derived_var);
+                                        log_print("Tainted alloca: " + derived_var.name + " (position " + std::to_string(alloca_idx) + " in " + func_name + ")");
+                                    }
+                                } else {
+                                    log_print("WARNING: Could not map PhASAR alloca at position " + std::to_string(alloca_idx) + " in " + func_name);
+                                }
+                            }
+                        }
+                        // check if this fact is a load from a tainted alloca
+                        else if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(Fact)) {
+                            if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(LI->getPointerOperand())) {
+                                if (!tainted_allocs.count(AI)) {
+                                    tainted_allocs.insert(AI);
+                                    
+                                    std::string func_name = AI->getFunction() ? AI->getFunction()->getName().str() : "";
+                                    int alloca_idx = 0;
+                                    bool found = false;
+                                    for (auto &BB : *AI->getFunction()) {
+                                        for (auto &I : BB) {
+                                            if (auto *CurAI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+                                                if (CurAI == AI) {
+                                                    found = true;
+                                                    break;
+                                                }
+                                                alloca_idx++;
+                                            }
+                                        }
+                                        if (found) break;
+                                    }
+                                    
+                                    auto key = std::make_pair(func_name, alloca_idx);
+                                    if (original_allocas_by_position.count(key)) {
+                                        llvm::AllocaInst *original_ai = original_allocas_by_position[key];
+                                        
+                                        bool is_explicit = false;
+                                        for (const auto& evar : explicit_vars) {
+                                            if (evar.variable == original_ai) {
+                                                is_explicit = true;
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if (!is_explicit) {
+                                            SensitiveVar derived_var;
+                                            derived_var.variable = original_ai;
+                                            derived_var.location = original_ai;
+                                            derived_var.isGlobal = false;
+                                            derived_var.name = original_ai->hasName() ? original_ai->getName().str() : ("<derived_" + std::to_string(alloca_idx) + ">");
+                                            
+                                            derived_vars.push_back(derived_var);
+                                            log_print("Tainted variable (via load): " + derived_var.name + " (position " + std::to_string(alloca_idx) + " in " + func_name + ")");
+                                        }
+                                    } else {
+                                        log_print("WARNING: Could not map PhASAR alloca at position " + std::to_string(alloca_idx) + " in " + func_name + " (via load)");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
