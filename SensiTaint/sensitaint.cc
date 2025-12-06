@@ -344,6 +344,19 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
                 }
             }
         }
+        // phasar tracks function sources, so we inject marker function call wrappers
+        log_print("[PhASAR] Injecting taint marker function for sensitive variables...");
+        
+        psr::TaintConfigData config_data;
+        psr::FunctionData marker_func;
+        marker_func.Name = "__sensitaint_mark_tainted";
+        marker_func.ReturnCat = psr::TaintCategory::Source;
+        config_data.Functions.push_back(marker_func);
+        
+        log_print("Registered __sensitaint_mark_tainted as taint source function");
+        
+        psr::LLVMTaintConfig config(HA.getProjectIRDB(), config_data);
+        log_print("[PhASAR] Taint config created with " + std::to_string(config_data.Functions.size()) + " source functions");
 
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
