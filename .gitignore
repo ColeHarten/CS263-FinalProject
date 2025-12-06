@@ -57,3 +57,22 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# DS_Store
+.DS_Store
+
+# build directories
+build/
+SensiTaint/build/
+
+# Backup files
+*.bak
+
+# PhASAR external directory as we use the installed version for now
+external/
+
+# SensiTaint binary and test executables
+SensiTaint/sensitaint
+SensiTaint/test
+SensiTaint/test[0-9]*
+SensiTaint/test_*
