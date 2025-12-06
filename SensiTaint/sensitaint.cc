@@ -367,6 +367,28 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
         log_print("[PhASAR] Solver complete!");
         log_print("[PhASAR] Extracting tainted values...");
 
+        // avoid duplicates
+        std::set<const llvm::Value*> seen_values;
+        std::set<const llvm::Value*> tainted_allocs;
+        int total_facts = 0;
+        
+        for (const auto *F : HA.getProjectIRDB().getAllFunctions()) {
+            if (!F || F->isDeclaration()) continue;
+            
+            for (const auto &BB : *F) {
+                for (const auto &I : BB) {
+                    auto Facts = Solver.ifdsResultsAt(&I);
+                    
+                    if (!Facts.empty()) {
+                        total_facts += Facts.size();
+                    }
+                    
+                    for (const auto *Fact : Facts) {
+                        if (!Fact || Fact == TaintProblem.getZeroValue()) continue;
+                        
+                        if (seen_values.count(Fact)) continue;
+                        seen_values.insert(Fact);
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
