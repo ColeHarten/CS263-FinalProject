@@ -358,6 +358,15 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
         psr::LLVMTaintConfig config(HA.getProjectIRDB(), config_data);
         log_print("[PhASAR] Taint config created with " + std::to_string(config_data.Functions.size()) + " source functions");
 
+        // run the taint analysis solver provided by phasar
+        log_print("[PhASAR] Running IFDS solver...");
+        psr::IFDSTaintAnalysis TaintProblem(&HA.getProjectIRDB(), &HA.getAliasInfo(), &config, entryPoints, true);
+        psr::IFDSSolver Solver(TaintProblem, &HA.getICFG());
+        Solver.solve();
+        
+        log_print("[PhASAR] Solver complete!");
+        log_print("[PhASAR] Extracting tainted values...");
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
