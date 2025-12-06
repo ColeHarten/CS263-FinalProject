@@ -4,7 +4,7 @@
 #include "sensitive.h"
 
 
-void func(int data) {
+int func(int data) {
     return data + 100;
 }
 
@@ -43,11 +43,11 @@ int main() {
     printf("Password: %x\n", password);
     printf("Copy: %x\n", copy);
 
-    // // phasar should mark this as tainted as it's a func call with sensitive var
-    // int result = func(secret);
+    // phasar should mark this as tainted as it's a func call with sensitive var
+    int result = func(password);
     
-    // printf("Secret: %x\n", secret);
-    // printf("Result: %x\n", result);
+    printf("Secret: %x\n", password);
+    printf("Result: %x\n", result);
     
     raise(SIGSEGV);
 
