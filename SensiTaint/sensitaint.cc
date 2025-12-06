@@ -26,6 +26,20 @@
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IRReader/IRReader.h"
 
+#include "phasar/PhasarLLVM/ControlFlow/LLVMBasedICFG.h"
+#include "phasar/PhasarLLVM/DB/LLVMProjectIRDB.h"
+#include "phasar/PhasarLLVM/Pointer/LLVMAliasSet.h"
+#include "phasar/PhasarLLVM/TypeHierarchy/DIBasedTypeHierarchy.h"
+#include "phasar/PhasarLLVM/DataFlow/IfdsIde/Problems/IFDSTaintAnalysis.h"
+#include "phasar/DataFlow/IfdsIde/Solver/IFDSSolver.h"
+#include "phasar/PhasarLLVM/TaintConfig/LLVMTaintConfig.h"
+#include "phasar/PhasarLLVM/TaintConfig/TaintConfigData.h"
+#include "phasar/PhasarLLVM/TaintConfig/TaintConfigBase.h"
+#include "phasar/PhasarLLVM/HelperAnalyses.h"
+#include "phasar/ControlFlow/CallGraphAnalysisType.h"
+#include <set>
+#include <map>
+
 /*
 *   This is the program to take in the client C program, inject code to record sensitive
 *   variables at runtime in a shadow buffer, install signal handlers to santize the core 
