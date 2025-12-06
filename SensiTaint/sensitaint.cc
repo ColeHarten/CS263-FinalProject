@@ -193,6 +193,76 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
     
     log_print("Created marker function declaration");
 
+    // for each sensitive var inject markers
+    int markers_injected = 0;
+    for (const auto& explicit_var : explicit_vars) {
+        if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(explicit_var.variable)) {
+            std::string func_name = AI->getFunction()->getName().str();
+            
+            // find alloca in temp module
+            int target_idx = 0;
+            bool found_idx = false;
+            for (auto &BB : *AI->getFunction()) {
+                for (auto &I : BB) {
+                    if (auto *CheckAI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+                        if (CheckAI == AI) {
+                            found_idx = true;
+                            break;
+                        }
+                        target_idx++;
+                    }
+                }
+                if (found_idx) break;
+            }
+            
+            // find the same alloca in temp_module
+            for (auto &F : *temp_module) {
+                if (F.getName() != func_name) continue;
+                
+                int current_idx = 0;
+                for (auto &BB : F) {
+                    for (auto &I : BB) {
+                        if (auto *TempAI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+                            if (current_idx == target_idx) {
+                                // found the alloca so inject marker call
+                                for (auto *User : TempAI->users()) {
+                                    if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(User)) {
+                                        if (SI->getPointerOperand() == TempAI) {
+                                            llvm::IRBuilder<> builder(SI);
+                                            llvm::Value *original_value = SI->getValueOperand();
+                                            llvm::Value *marked_value = builder.CreateCall(marker_func, {original_value});
+                                            SI->setOperand(0, marked_value);
+                                            markers_injected++;
+                                            log_print("Injected marker for variable " + explicit_var.name);
+                                            break;
+                                        }
+                                    }
+                                }
+                                goto next_var;
+                            }
+                            current_idx++;
+                        }
+                    }
+                }
+                next_var:
+                break;
+            }
+        }
+    }
+    
+    // now that bitcode is modified, write to a temp file for phasar
+    std::string phasar_bc = bitcode_file + ".phasar.bc";
+    std::error_code ec;
+    llvm::raw_fd_ostream out(phasar_bc, ec, llvm::sys::fs::OpenFlags::OF_None);
+    if (ec) {
+        log_print("[PhASAR ERROR] Failed to write transformed bitcode: " + ec.message(), true);
+        return derived_vars;
+    }
+    WriteBitcodeToFile(*temp_module, out);
+    out.close();
+    
+    log_print("[PhASAR] Injected " + std::to_string(markers_injected) + " marker calls, saved to " + phasar_bc);
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
