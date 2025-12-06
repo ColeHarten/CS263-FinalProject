@@ -112,7 +112,7 @@ std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
             for (llvm::Instruction &i : bb) {
                 if (auto *ci = llvm::dyn_cast<llvm::CallInst>(&i)) {
                     if (auto *called_func = ci->getCalledFunction()) {
-                        if (called_func->getName().starts_with("llvm.var.annotation") && ci->getNumOperands() >= 2) {
+                        if (called_func->getName().startswith("llvm.var.annotation") && ci->getNumOperands() >= 2) {
                             std::string annotation = get_annotation_string(ci->getOperand(1));
                             if (annotation == "sensitive") {
                                 llvm::Value *var = ci->getOperand(0);
@@ -313,32 +313,32 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
                     if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
                         // Check if this alloca has a sensitive annotation
                         for (auto *User : AI->users()) {
-                            if (auto *Call = llvm::dyn_cast<llvm::CallInst>(User)) {
-                                if (auto *CalledFunc = Call->getCalledFunction()) {
-                                    if (CalledFunc->getName() == "llvm.var.annotation") {
-                                        // Operand 0 is the annotated variable, 1 is ptr to annotation str
-                                        if (Call->getNumOperands() >= 2) 
-                                            llvm::Value *AnnotationOp = Call->getOperand(1);
-                                            llvm::GlobalVariable *GV = nullptr;
-                                            if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(AnnotationOp)) {
-                                                GV = llvm::dyn_cast<llvm::GlobalVariable>(CE->getOperand(0));
-                                            } else {
-                                                GV = llvm::dyn_cast<llvm::GlobalVariable>(AnnotationOp);
-                                            }
-                                            
-                                            if (GV && GV->hasInitializer()) {
-                                                if (auto *CDA = llvm::dyn_cast<llvm::ConstantDataArray>(GV->getInitializer())) {
-                                                    llvm::StringRef annotationStr = CDA->getAsString();
-                                                    if (annotationStr.startswith("sensitive")) {
-                                                        phasar_sensitive_allocas.insert(AI);
-                                                        log_print("Re-found sensitive alloca in PhASAR module");
+                                if (auto *Call = llvm::dyn_cast<llvm::CallInst>(User)) {
+                                    if (auto *CalledFunc = Call->getCalledFunction()) {
+                                        if (CalledFunc->getName() == "llvm.var.annotation") {
+                                            // Operand 0 is the annotated variable, 1 is ptr to annotation str
+                                            if (Call->getNumOperands() >= 2) {
+                                                llvm::Value *AnnotationOp = Call->getOperand(1);
+                                                llvm::GlobalVariable *GV = nullptr;
+                                                if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(AnnotationOp)) {
+                                                    GV = llvm::dyn_cast<llvm::GlobalVariable>(CE->getOperand(0));
+                                                } else {
+                                                    GV = llvm::dyn_cast<llvm::GlobalVariable>(AnnotationOp);
+                                                }
+                                                
+                                                if (GV && GV->hasInitializer()) {
+                                                    if (auto *CDA = llvm::dyn_cast<llvm::ConstantDataArray>(GV->getInitializer())) {
+                                                        llvm::StringRef annotationStr = CDA->getAsString();
+                                                        if (annotationStr.startswith("sensitive")) {
+                                                            phasar_sensitive_allocas.insert(AI);
+                                                            log_print("Re-found sensitive alloca in PhASAR module");
+                                                        }
                                                     }
                                                 }
                                             }
-                                        
+                                        }
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -660,7 +660,7 @@ bool preprocess_source(const std::string& source_file, std::string& preprocessed
 // Step 2: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
     log_print("[STEP 2] Generating bytecode from source...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = clang_cmd + " -O0 -g -emit-llvm -c " + source_file + " -o " + bitcode_file;
+    std::string cmd = "/opt/homebrew/opt/llvm@15/bin/clang -O0 -g -emit-llvm -c " + source_file + " -o " + bitcode_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to generate bytecode", true);
         return false;
