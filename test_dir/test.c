@@ -4,10 +4,8 @@
 #include "sensitive.h"
 
 
-void func() {
-    sensitive volatile int x = 0xfeedbeef;
-
-    raise(SIGSEGV);
+void func(int data) {
+    return data + 100;
 }
 
 // struct test {
@@ -32,9 +30,25 @@ int main() {
 
     // int q = x + 1;
 
-    func();
+    // func();
 
     // trigger a core dump
+    // raise(SIGSEGV);
+
+    sensitive int password = 0xDEADBEEF;
+
+    // phasar should mark copy as tainted and both should get sanitized
+    int copy = password;
+    
+    printf("Password: %x\n", password);
+    printf("Copy: %x\n", copy);
+
+    // // phasar should mark this as tainted as it's a func call with sensitive var
+    // int result = func(secret);
+    
+    // printf("Secret: %x\n", secret);
+    // printf("Result: %x\n", result);
+    
     raise(SIGSEGV);
 
     return 0;
