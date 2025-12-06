@@ -156,6 +156,43 @@ std::vector<llvm::CallInst*> find_malloc_stores(llvm::Value* ptr) {
     return mallocCalls;
 }
 
+// taint analysis with phasar
+std::vector<SensitiveVar> perform_phasar_taint_analysis(
+    const std::string& bitcode_file,
+    const std::vector<SensitiveVar>& explicit_vars,
+    std::shared_ptr<llvm::Module> original_module) 
+{
+    std::vector<SensitiveVar> derived_vars;
+    
+    // allows phasar to track taint sources from functions
+    log_print("[PhASAR] Injecting taint markers into bitcode...", false, Colors::BOLD + Colors::CYAN);
+    
+    // load bitcode to temp module
+    llvm::LLVMContext temp_context;
+    llvm::SMDiagnostic err;
+    auto temp_module = llvm::parseIRFile(bitcode_file, err, temp_context);
+    if (!temp_module) {
+        log_print("[PhASAR ERROR] Failed to load bitcode for marker injection", true);
+        return derived_vars;
+    }
+    
+    // create marker function declaration
+    llvm::FunctionType *marker_type = llvm::FunctionType::get(
+        llvm::Type::getInt32Ty(temp_context),
+        {llvm::Type::getInt32Ty(temp_context)},
+        false
+    );
+    llvm::Function *marker_func = llvm::Function::Create(
+        marker_type,
+        llvm::Function::ExternalLinkage,
+        "__sensitaint_mark_tainted",
+        temp_module.get()
+    );
+    marker_func->setDoesNotThrow();
+    marker_func->setWillReturn();
+    
+    log_print("Created marker function declaration");
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
