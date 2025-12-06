@@ -767,7 +767,10 @@ int main(int argc, char *argv[]) {
     log_print("");
 
     // 2: Generate bytecode
-    if (!generate_bytecode(source_file, temp_bitcode)) {
+    if (!generate_bytecode(preprocessed_file, temp_bitcode)) {
+        if (preprocessed_file != source_file) {
+            std::remove(preprocessed_file.c_str());
+        }
         return 1;
     }
     log_print("");
