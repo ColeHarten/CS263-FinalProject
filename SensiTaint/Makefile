@@ -5,7 +5,7 @@ CXX = g++
 
 # Path to LLVM build/install
 LLVM_PREFIX ?= /usr
-LLVM_CONFIG = $(shell which llvm-config-18 || which llvm-config)
+LLVM_CONFIG = $(shell which llvm-config || echo /opt/homebrew/opt/llvm@15/bin/llvm-config)
 
 # Source files
 SRC = $(wildcard *.cc)
@@ -14,7 +14,25 @@ TARGET = sensitaint
 # Compiler flags from LLVM
 CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -Wno-unused-parameter $(shell $(LLVM_CONFIG) --cppflags)
 LDFLAGS  = $(shell $(LLVM_CONFIG) --ldflags)
-LIBS     = $(shell $(LLVM_CONFIG) --libs core irreader bitwriter) $(shell $(LLVM_CONFIG) --system-libs)
+LIBS     = $(shell $(LLVM_CONFIG) --libs core irreader bitwriter analysis) $(shell $(LLVM_CONFIG) --system-libs)
+
+# PhASAR and its component libs
+CXXFLAGS += -DPHASAR_ENABLED -I/usr/local/include -I/opt/homebrew/include
+LIBS += -L/usr/local/lib \
+	-lphasar_llvm_ifdside \
+	-lphasar_llvm_db \
+	-lphasar_llvm_controlflow \
+	-lphasar_llvm_pointer \
+	-lphasar_llvm_typehierarchy \
+	-lphasar_llvm_utils \
+	-lphasar_llvm_mono \
+	-lphasar_llvm \
+	-lphasar_taintconfig \
+	-lphasar_controlflow \
+	-lphasar_utils \
+	-lphasar_config \
+	-lphasar_pass \
+	-lphasar
 
 # Default target
 all: $(TARGET)
