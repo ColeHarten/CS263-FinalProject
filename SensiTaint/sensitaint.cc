@@ -691,6 +691,13 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
     for (const auto& var : vars) {
         log_print("  - " + var.name + " (" + (var.isGlobal ? "global" : "local") + ")");
     }
+
+    // Step 3b: Run phasar taint propagation
+    log_print("[STEP 3b] Running PhASAR taint propagation...", false, Colors::BOLD + Colors::BLUE);
+    auto derived_vars = perform_phasar_taint_analysis(bitcode_file, vars, m);
+    log_print("[STEP 3b] PhASAR found " + std::to_string(derived_vars.size()) + " derived sensitive variables");
+    vars.insert(vars.end(), derived_vars.begin(), derived_vars.end());
+    log_print("[STEP 3b] Total variables to track: " + std::to_string(vars.size()), false, Colors::BOLD + Colors::GREEN);
     
     return vars;
 }
