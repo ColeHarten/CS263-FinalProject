@@ -2,6 +2,8 @@
 #include "utils.hh"
 
 #include <iostream>
+#include <fstream>
+#include <regex>
 #include <string>
 #include <vector>
 #include <cstdlib>
