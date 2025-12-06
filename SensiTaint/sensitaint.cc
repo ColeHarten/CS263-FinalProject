@@ -281,6 +281,70 @@ std::vector<SensitiveVar> perform_phasar_taint_analysis(
     
     log_print("[PhASAR] Starting taint propagation analysis...", false, Colors::BOLD + Colors::CYAN);
 
+    try {
+        // set for source vals
+        std::set<const llvm::Value*> sourceValues;
+        for (const auto& var : explicit_vars) {
+            sourceValues.insert(var.variable);
+        }
+        
+        log_print("[PhASAR] Found " + std::to_string(sourceValues.size()) + " taint sources");
+        
+        std::vector<std::string> entryPoints = {"main"};
+        psr::HelperAnalyses HA(phasar_bc, entryPoints);
+        
+        if (!HA.getProjectIRDB().isValid()) {
+            log_print("[PhASAR ERROR] Failed to load IR database", true);
+            return derived_vars;
+        }
+        
+        // find the sensitive allocas in phasar module by matching annotations
+        // need to do again bc phasar loads a fresh module with different pointers
+        log_print("[PhASAR] Re-identifying sensitive allocas in PhASAR's module...");
+        std::set<const llvm::Value*> phasar_sensitive_allocas;
+        
+        auto allFunctions = HA.getProjectIRDB().getAllFunctions();
+        
+        for (const auto *F : allFunctions) {
+            if (!F || F->isDeclaration()) continue;
+            
+            for (const auto &BB : *F) {
+                for (const auto &I : BB) {
+                    if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(&I)) {
+                        // Check if this alloca has a sensitive annotation
+                        for (auto *User : AI->users()) {
+                            if (auto *Call = llvm::dyn_cast<llvm::CallInst>(User)) {
+                                if (auto *CalledFunc = Call->getCalledFunction()) {
+                                    if (CalledFunc->getName() == "llvm.var.annotation") {
+                                        // Operand 0 is the annotated variable, 1 is ptr to annotation str
+                                        if (Call->getNumOperands() >= 2) 
+                                            llvm::Value *AnnotationOp = Call->getOperand(1);
+                                            llvm::GlobalVariable *GV = nullptr;
+                                            if (auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(AnnotationOp)) {
+                                                GV = llvm::dyn_cast<llvm::GlobalVariable>(CE->getOperand(0));
+                                            } else {
+                                                GV = llvm::dyn_cast<llvm::GlobalVariable>(AnnotationOp);
+                                            }
+                                            
+                                            if (GV && GV->hasInitializer()) {
+                                                if (auto *CDA = llvm::dyn_cast<llvm::ConstantDataArray>(GV->getInitializer())) {
+                                                    llvm::StringRef annotationStr = CDA->getAsString();
+                                                    if (annotationStr.startswith("sensitive")) {
+                                                        phasar_sensitive_allocas.insert(AI);
+                                                        log_print("Re-found sensitive alloca in PhASAR module");
+                                                    }
+                                                }
+                                            }
+                                        
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
