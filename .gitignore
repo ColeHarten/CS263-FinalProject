@@ -76,3 +76,4 @@ SensiTaint/sensitaint
 SensiTaint/test
 SensiTaint/test[0-9]*
 SensiTaint/test_*
+SensiTaint/core
