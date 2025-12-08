@@ -22,6 +22,16 @@
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IRReader/IRReader.h"
 
+
+#include <phasar/PhasarLLVM/DB/LLVMProjectIRDB.h>
+
+#include <phasar/DataFlow/IfdsIde/IFDSTabulationProblem.h>
+#include <phasar/DataFlow/IfdsIde/FlowFunctions.h>
+
+#include <phasar/PhasarLLVM/DataFlow/IfdsIde/LLVMFlowFunctions.h>
+#include <phasar/PhasarLLVM/DataFlow/IfdsIde/LLVMZeroValue.h>
+
+
 /*
 *   This is the program to take in the client C program, inject code to record sensitive
 *   variables at runtime in a shadow buffer, install signal handlers to santize the core 
@@ -92,7 +102,7 @@ std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
                         std::string annotation = get_annotation_string(annotation_struct->getOperand(1));
                         if (annotation == "sensitive") {
                             if (auto *global_var = llvm::dyn_cast<llvm::GlobalVariable>(annotation_struct->getOperand(0))) {
-                                std::string name = global_var->hasName() ? global_var->getName().str() : "<local>";
+                                std::string name = global_var->hasName() ? global_var->getName().str() : "<global>";
                                 vars.push_back({global_var, name, nullptr, true});
                                 log_print("Found global: " + name, false, Colors::MAGENTA);
                             }
@@ -111,7 +121,7 @@ std::vector<SensitiveVar> find_sensitive_vars(std::shared_ptr<llvm::Module> m) {
             for (llvm::Instruction &i : bb) {
                 if (auto *ci = llvm::dyn_cast<llvm::CallInst>(&i)) {
                     if (auto *called_func = ci->getCalledFunction()) {
-                        if (called_func->getName().starts_with("llvm.var.annotation") && ci->getNumOperands() >= 2) {
+                        if (called_func->getName().startswith("llvm.var.annotation") && ci->getNumOperands() >= 2) {
                             std::string annotation = get_annotation_string(ci->getOperand(1));
                             if (annotation == "sensitive") {
                                 llvm::Value *var = ci->getOperand(0);

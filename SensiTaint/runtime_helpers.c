@@ -39,7 +39,7 @@ void record_sensitive_var(const char* name, void* ptr, size_t sz, int ptr_depth)
 // This is teh handler that we run at a crash. It just iterates through elements in teh
 // shadow buffer and memsets them to 0.
 static void crash_handler(int sig, siginfo_t *si, void *unused) {
-    printf("[CRASH]: Signal %d received, sanitizing sensitive data...\n", sig);
+    printf("[CRASH]: Signal %d (%s) received, sanitizing sensitive data...\n", sig, strsignal(sig));
     
     // Memset all of the memory to 0
     for(size_t i = 0; i < shadow_index; i++ ) {

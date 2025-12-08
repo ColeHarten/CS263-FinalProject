@@ -5,7 +5,7 @@ CXX = g++
 
 # Path to LLVM build/install
 LLVM_PREFIX ?= /usr
-LLVM_CONFIG = $(shell which llvm-config-18 || which llvm-config)
+LLVM_CONFIG = $(shell which llvm-config-15 || which llvm-config)
 
 # Source files
 SRC = $(wildcard *.cc)
@@ -15,6 +15,10 @@ TARGET = sensitaint
 CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -Wno-unused-parameter $(shell $(LLVM_CONFIG) --cppflags)
 LDFLAGS  = $(shell $(LLVM_CONFIG) --ldflags)
 LIBS     = $(shell $(LLVM_CONFIG) --libs core irreader bitwriter) $(shell $(LLVM_CONFIG) --system-libs)
+
+CXXFLAGS += -I$(PHASAR_ROOT)/include
+LDFLAGS  += -L$(PHASAR_ROOT)/lib
+LIBS     += -lphasar # plus whatever sub-libs PhASAR’s docs say you need
 
 # Default target
 all: $(TARGET)
@@ -29,7 +33,7 @@ clean:
 
 # Docker targets
 docker-build:
-	docker build -t sensitaint .
+	docker build -t sensitaint . | tee history.txt
 
 docker-run:
 	docker run -it --rm \
