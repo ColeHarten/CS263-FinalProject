@@ -42,8 +42,61 @@
 #include "phasar/PhasarLLVM/IfdsIde/Problems/IFDSTaintAnalysis.h"
 #include "phasar/PhasarLLVM/Utils/TaintConfiguration.h"
 #include "phasar/PhasarLLVM/ControlFlow/LLVMBasedICFG.h"
-#include "phasar/PhasarLLVM/IfdsIde/Solver/IFDSSolver.h"
+#include "phasar/PhasarLLVM/IfdsIde/Solver/LLVMIFDSSolver.h"
 #include "phasar/PhasarLLVM/Pointer/LLVMTypeHierarchy.h"
+#include "phasar/PhasarLLVM/IfdsIde/FlowFunctions/Identity.h"
+
+// custom taint analysis
+class CustomIFDSTaintAnalysis : public psr::IFDSTaintAnalysis {
+private:
+    std::map<const llvm::Instruction*, std::set<const llvm::Value*>> CustomSeeds;
+    
+public:
+    CustomIFDSTaintAnalysis(psr::LLVMBasedICFG &icfg, 
+                           const psr::LLVMTypeHierarchy &th,
+                           const psr::ProjectIRDB &irdb,
+                           psr::TaintConfiguration<const llvm::Value*> TSF,
+                           std::vector<std::string> EntryPoints,
+                           std::map<const llvm::Instruction*, std::set<const llvm::Value*>> Seeds)
+        : IFDSTaintAnalysis(icfg, th, irdb, TSF, EntryPoints), 
+          CustomSeeds(Seeds) {}
+    
+    // override teh initialSeeds
+    std::map<const llvm::Instruction*, std::set<const llvm::Value*>> initialSeeds() override {
+        
+        auto SeedMap = CustomSeeds;
+        for (auto &entry : SeedMap) {
+            entry.second.insert(zeroValue());
+        }
+        return SeedMap;
+    }
+    
+    // override functions calls
+    // this stops the segfault that happens on MapFactsToCallee
+    
+    std::shared_ptr<psr::FlowFunction<const llvm::Value*>> 
+    getCallFlowFunction(const llvm::Instruction *callSite, const llvm::Function *destFun) override {
+        // Return Identity to pass facts through WITHOUT entering the function
+        return psr::Identity<const llvm::Value*>::getInstance();
+    }
+    
+    std::shared_ptr<psr::FlowFunction<const llvm::Value*>> 
+    getRetFlowFunction(const llvm::Instruction *callSite, const llvm::Function *calleeFun,
+                       const llvm::Instruction *exitStmt, const llvm::Instruction *retSite) override {
+        return psr::Identity<const llvm::Value*>::getInstance();
+    }
+    
+    std::shared_ptr<psr::FlowFunction<const llvm::Value*>> 
+    getCallToRetFlowFunction(const llvm::Instruction *callSite, const llvm::Instruction *retSite,
+                             std::set<const llvm::Function*> callees) override {
+        return psr::Identity<const llvm::Value*>::getInstance();
+    }
+    
+    std::shared_ptr<psr::FlowFunction<const llvm::Value*>> 
+    getSummaryFlowFunction(const llvm::Instruction *callStmt, const llvm::Function *destFun) override {
+        return nullptr;
+    }
+};
 
 
 /*
@@ -175,8 +228,88 @@ propagate_taint(const std::string &ir_file,
         throw std::runtime_error("IR file not found: " + ir_file);
     }
 
+    std::string stripped_ir = ir_file + ".stripped.bc";
+    
+    // load module
+    static llvm::LLVMContext strip_ctx;
+    static llvm::SMDiagnostic strip_err;
+    auto strip_module = llvm::parseIRFile(ir_file, strip_err, strip_ctx);
+    if (!strip_module) {
+        return explicit_vars;
+    }
+    
+    // remove llvm.var.annotation calls
+    std::vector<llvm::CallInst*> to_remove;
+    for (llvm::Function &f : *strip_module) {
+        for (llvm::BasicBlock &bb : f) {
+            for (llvm::Instruction &inst : bb) {
+                if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+                    if (auto *called = call->getCalledFunction()) {
+                        if (called->getName().startswith("llvm.var.annotation") ||
+                            called->getName().startswith("llvm.annotation")) {
+                            to_remove.push_back(call);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    for (auto *call : to_remove) {
+        call->eraseFromParent();
+    }
+    
+    // for phasar, treat functions outside main() as external to prevent crashes
+    int stripped_functions = 0;
+    for (llvm::Function &f : *strip_module) {
+        if (f.getName() == "main") continue;
+        if (f.isDeclaration()) continue;
+        if (f.isIntrinsic() || f.getName().startswith("llvm.")) continue;
+        while (!f.empty()) {
+            f.begin()->eraseFromParent();
+        }
+        stripped_functions++;
+    }
+    
+    // I chose to handle function call taint propagation with the custom logic above, not phasar
+    std::vector<llvm::CallInst*> calls_to_remove;
+    std::map<llvm::CallInst*, std::pair<llvm::Value*, llvm::Value*>> call_info;
+    
+    for (llvm::Function &f : *strip_module) {
+        for (llvm::BasicBlock &bb : f) {
+            for (llvm::Instruction &inst : bb) {
+                if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+                    if (auto *callee = call->getCalledFunction()) {
+                        if (callee->isIntrinsic() || callee->getName().startswith("llvm.")) {
+                            continue;
+                        }
+                    }
+                    llvm::Value *arg = call->getNumArgOperands() > 0 ? call->getArgOperand(0) : nullptr;
+                    call_info[call] = {call, arg};
+                    calls_to_remove.push_back(call);
+                }
+            }
+        }
+    }
+    
+    for (auto *call : calls_to_remove) {
+        if (!call->use_empty()) {
+            call->replaceAllUsesWith(llvm::UndefValue::get(call->getType()));
+        }
+        call->eraseFromParent();
+    }
+    std::error_code ec;
+    llvm::raw_fd_ostream out(stripped_ir, ec, llvm::sys::fs::F_None);
+    if (ec) {
+        log_print("[ERROR] Failed to write stripped IR: " + ec.message());
+        return explicit_vars;
+    }
+    WriteBitcodeToFile(*strip_module, out);
+    out.close();
+    log_print("Stripped IR written to: " + stripped_ir);
+
     // Set up Phasar infrastructure
-    psr::ProjectIRDB IRDB({ir_file});
+    psr::ProjectIRDB IRDB({stripped_ir});
 
     log_print("modules: " + std::to_string(IRDB.getAllModules().size()));
     log_print("functions: " + std::to_string(IRDB.getAllFunctions().size()));
@@ -208,48 +341,156 @@ propagate_taint(const std::string &ir_file,
     }
     log_print("Number of function declarations without definition: " + std::to_string(num_decl_only));
     
-    //! This line seg faults!
-    psr::LLVMBasedICFG ICFG(TH, IRDB, psr::CallGraphAnalysisType::CHA);
+    log_print("Checking for entry point 'main'...");
+    const llvm::Function *mainFunc = nullptr;
+    for (auto *func : IRDB.getAllFunctions()) {
+        if (func && func->getName() == "main") {
+            mainFunc = func;
+            log_print("Found main function: " + std::string(mainFunc->getName()));
+            log_print("Has body: " + std::string(mainFunc->isDeclaration() ? "no" : "yes"));
+            log_print("Num basic blocks: " + std::to_string(mainFunc->size()));
+            break;
+        }
+    }
+    
+    if (!mainFunc) {
+        log_print("[ERROR] Could not find main function!");
+        return explicit_vars;
+    }
+    
+    psr::LLVMBasedICFG *ICFG = nullptr;
+    try {
+        ICFG = new psr::LLVMBasedICFG(TH, IRDB);
+        log_print("ICFG constructed successfully!");
+    } catch (const std::exception &e) {
+        log_print("[ERROR] ICFG construction failed with exception: " + std::string(e.what()));
+        return explicit_vars;
+    } catch (...) {
+        log_print("[ERROR] ICFG construction failed with unknown exception");
+        return explicit_vars;
+    }
+    
+    if (!ICFG) {
+        log_print("[ERROR] ICFG is null after construction!");
+        return explicit_vars;
+    }
 
     psr::TaintConfiguration<const llvm::Value*> TaintConfig;
 
-    // Map from instruction -> set of tainted values
+    log_print("Building initial seeds from " + std::to_string(explicit_vars.size()) + " explicit variables...");
+    
+    // get stripped module from IRDB
+    auto stripped_modules = IRDB.getAllModules();
+    if (stripped_modules.empty()) {
+        log_print("[ERROR] No modules in IRDB");
+        delete ICFG;
+        return explicit_vars;
+    }
+    // getAllModules returns a set
+    llvm::Module *stripped_module = const_cast<llvm::Module*>(*stripped_modules.begin());
     std::map<const llvm::Instruction*, std::set<const llvm::Value*>> seeds;
 
 
     // Loop over all sensitive variables
     for (auto &var : explicit_vars) {
-        if (!var.location) {
-            log_print("Warning: explicit var " + var.name + " has null location, skipping");
-            continue;
-        }
         if (!var.variable) {
             log_print("Warning: explicit var " + var.name + " has null variable, skipping");
             continue;
         }
-        seeds[var.location].insert(var.variable);
+        
+        // find the alloca instruction
+        llvm::Value *actualVar = var.variable;
+        if (auto *bc = llvm::dyn_cast<llvm::BitCastInst>(var.variable)) {
+            actualVar = bc->getOperand(0);
+        }
+        
+        auto *orig_alloca = llvm::dyn_cast<llvm::AllocaInst>(actualVar);
+        if (!orig_alloca) {
+            log_print("Warning: " + var.name + " is not an alloca, skipping");
+            continue;
+        }
+        
+        // Find the corresponding alloca in the stripped module
+        auto *orig_func = orig_alloca->getFunction();
+        if (!orig_func) {
+            log_print("Warning: cannot find function for " + var.name);
+            continue;
+        }
+        
+        auto *stripped_func = stripped_module->getFunction(orig_func->getName());
+        if (!stripped_func || stripped_func->isDeclaration()) {
+            log_print("Warning: cannot find function " + orig_func->getName().str() + " in stripped module");
+            continue;
+        }
+        
+        // findmatching alloca by counting allocas in order
+        unsigned alloca_index = 0;
+        for (auto &bb : *orig_func) {
+            for (auto &inst : bb) {
+                if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+                    if (ai == orig_alloca) {
+                        goto found_index;
+                    }
+                    alloca_index++;
+                }
+            }
+        }
+        found_index:
+        unsigned current_index = 0;
+        llvm::AllocaInst *stripped_alloca = nullptr;
+        
+        for (auto &bb : *stripped_func) {
+            for (auto &inst : bb) {
+                if (auto *ai = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+                    if (current_index == alloca_index) {
+                        stripped_alloca = ai;
+                        goto found_stripped;
+                    }
+                    current_index++;
+                }
+            }
+        }
+        found_stripped:
+        
+        if (!stripped_alloca) {
+            log_print("Warning: cannot find corresponding alloca in stripped IR for " + var.name);
+            continue;
+        }
+        
+        llvm::LoadInst *first_load = nullptr;
+        for (auto &bb : *stripped_func) {
+            for (auto &inst : bb) {
+                if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&inst)) {
+                    if (load->getPointerOperand() == stripped_alloca) {
+                        first_load = load;
+                        break;
+                    }
+                }
+            }
+            if (first_load) break;
+        }
+        
+        if (first_load) {
+            seeds[first_load].insert(first_load);
+            log_print("Added seed: " + var.name + " -> result of load from " + stripped_alloca->getName().str());
+        } else {
+            log_print("Warning: no load found for alloca " + var.name);
+        }
     }
 
-    // Add these seeds to the TaintConfiguration
-    TaintConfig.addInitialSeeds(seeds);
-
-    psr::IFDSTaintAnalysis TaintProblem(ICFG, TH, IRDB, TaintConfig);
-
-    psr::IFDSSolver<
-        const llvm::Instruction*,  
-        const llvm::Value*,        
-        const llvm::Function*,     
-        psr::LLVMBasedICFG&        
-    > Solver(TaintProblem);        
-
+    CustomIFDSTaintAnalysis TaintProblem(*ICFG, TH, IRDB, TaintConfig, {"main"}, seeds);
+    psr::LLVMIFDSSolver<const llvm::Value*, psr::LLVMBasedICFG&> Solver(TaintProblem, true);
+    
+    log_print("Running IFDS solver...");
+    bool solver_completed = false;
     try {
         Solver.solve();
+        log_print("Solver completed successfully!");
+        solver_completed = true;
     } catch (const std::exception &e) {
-        log_print("Solver crashed with exception: " + std::string(e.what()));
-        return explicit_vars;
+        log_print("[WARNING] Solver crashed with exception: " + std::string(e.what()));
     } catch (...) {
-        log_print("Solver crashed with unknown exception");
-        return explicit_vars;
+        log_print("[WARNING] Solver crashed with segfault (expected for interprocedural calls)");
     }
 
     // Extract results from solver
@@ -261,6 +502,9 @@ propagate_taint(const std::string &ir_file,
     }
 
     // Iterate through all functions to find tainted values
+    int total_insts_checked = 0;
+    int insts_with_nonempty_sets = 0;
+    
     for (auto *func : IRDB.getAllFunctions()) {
         if (!func) continue;
         if (func->isDeclaration()) continue;
@@ -268,33 +512,269 @@ propagate_taint(const std::string &ir_file,
         for (auto &bb : *func) {
             for (auto &inst : bb) {
                 // Check if this instruction has tainted values
+                total_insts_checked++;
+                if (llvm::isa<llvm::CallInst>(&inst)) continue;
                 auto taintSet = Solver.ifdsResultsAt(&inst);
                 if (taintSet.empty()) continue;
+                
+                insts_with_nonempty_sets++;
+                std::string inst_name = inst.hasName() ? inst.getName().str() : "<unnamed>";
+                log_print("Instruction with non-empty taint set: " + inst_name + " (" + std::string(inst.getOpcodeName()) + "), taintSet.size=" + std::to_string(taintSet.size()));
+                
+                // check if non-zero fact is present (meaning taint reached this instruction)
+                bool has_nonzero_fact = false;
+                for (const auto *fact : taintSet) {
+                    if (!fact) continue;
 
-                for (const auto *taintedVal : taintSet) {
-                    if (!taintedVal) continue;
-                    if (seen_vars.find(taintedVal) != seen_vars.end()) continue;
-
-                    std::string name = taintedVal->hasName() ? 
-                        taintedVal->getName().str() : 
-                        "<derived_" + std::to_string(seen_vars.size()) + ">";
-
-                    // Create a SensitiveVar for this derived tainted value
-                    SensitiveVar derivedVar;
-                    derivedVar.variable = const_cast<llvm::Value*>(taintedVal);
-                    derivedVar.name = name;
-                    derivedVar.location = const_cast<llvm::Instruction*>(&inst);
-                    derivedVar.derived = true;
-
-                    all_vars.push_back(derivedVar);
-                    seen_vars.insert(taintedVal);
-
-                    log_print("Found derived sensitive var: " + name + " in " + func->getName().str());
+                    std::string fact_name = fact->hasName() ? fact->getName().str() : "<unnamed_fact>";
+                    if (fact_name.find("zero_value") != std::string::npos) continue;
+                    
+                    // founc a real tainted fact, phasar is going to log this as "Value: TOP"
+                    has_nonzero_fact = true;
+                    seen_vars.insert(&inst);
+                    break;
+                }
+                
+                if (!has_nonzero_fact) {
+                    log_print("only has zero_value facts, skipping");
                 }
             }
         }
     }
+    
+    log_print("Found " + std::to_string(insts_with_nonempty_sets) + " with non-empty taint sets");
+    int phasar_tainted_count = seen_vars.size();
+    log_print("PhASAR found " + std::to_string(phasar_tainted_count) + " intraprocedural tainted values in stripped IR");
 
+    log_print("Mapping PhASAR's intraprocedural results from stripped IR to original IR...");
+    
+    static llvm::LLVMContext orig_ctx;
+    static llvm::SMDiagnostic orig_err;
+    auto original_module = llvm::parseIRFile(ir_file, orig_err, orig_ctx);
+    if (!original_module) {
+        log_print("[ERROR] Failed to load original IR");
+        return all_vars;
+    }
+    
+    std::set<llvm::Value*> tainted_values;
+    int mapped_count = 0;
+    for (const auto *tainted_val : seen_vars) {
+        auto *tainted_inst = llvm::dyn_cast<llvm::Instruction>(tainted_val);
+        if (!tainted_inst) continue;
+        
+        std::string func_name = tainted_inst->getFunction()->getName().str();
+        const llvm::Function *stripped_func = tainted_inst->getFunction();
+        unsigned bb_idx = 0;
+        const llvm::BasicBlock *tainted_bb = tainted_inst->getParent();
+        for (auto &bb : *stripped_func) {
+            if (&bb == tainted_bb) break;
+            bb_idx++;
+        }
+        unsigned inst_idx = 0;
+        for (auto &inst : *tainted_bb) {
+            if (&inst == tainted_inst) break;
+            inst_idx++;
+        }
+        llvm::Function *orig_func = original_module->getFunction(func_name);
+        if (!orig_func) continue;
+        
+        unsigned orig_bb_idx = 0;
+        for (auto &orig_bb : *orig_func) {
+            if (orig_bb_idx == bb_idx) {
+                unsigned orig_inst_idx = 0;
+                for (auto &orig_inst : orig_bb) {
+                    if (auto *call = llvm::dyn_cast<llvm::CallInst>(&orig_inst)) {
+                        if (call->getCalledFunction() && 
+                            call->getCalledFunction()->getName().startswith("llvm.var.annotation")) {
+                            continue;
+                        }
+                    }
+                    
+                    if (orig_inst_idx == inst_idx) {
+                        tainted_values.insert(&orig_inst);
+                        mapped_count++;
+                        std::string name = orig_inst.hasName() ? orig_inst.getName().str() : "<unnamed>";
+                        log_print("Mapped to original IR: " + name + " (" + std::string(orig_inst.getOpcodeName()) + ")");
+                        break;
+                    }
+                    orig_inst_idx++;
+                }
+                break;
+            }
+            orig_bb_idx++;
+        }
+    }
+       
+    std::set<llvm::Value*> phasar_intra_results = tainted_values;
+    
+    log_print("Now running custom dataflow on original IR...");
+    
+    tainted_values.clear();
+    std::set<llvm::Value*> tainted_memory_locations;
+    
+    log_print("Seeding custom dataflow from explicit sensitive variables...");
+    for (llvm::Function &func : *original_module) {
+        if (func.isDeclaration()) continue;
+        for (llvm::BasicBlock &bb : func) {
+            for (llvm::Instruction &inst : bb) {
+                if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+                    llvm::Function *calledFunc = call->getCalledFunction();
+                    if (calledFunc && calledFunc->getName().startswith("llvm.var.annotation")) {
+                        llvm::Value *annotated = call->getArgOperand(0);
+                        llvm::Value *current = annotated;
+                        llvm::AllocaInst *alloca = nullptr;
+                        
+                        while (current) {
+                            if (auto *a = llvm::dyn_cast<llvm::AllocaInst>(current)) {
+                                alloca = a;
+                                break;
+                            } else if (auto *bc = llvm::dyn_cast<llvm::BitCastInst>(current)) {
+                                current = bc->getOperand(0);
+                            } else if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(current)) {
+                                current = gep->getPointerOperand();
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        if (alloca) {
+                            tainted_memory_locations.insert(alloca);
+                            log_print("Seeded alloca: " + (alloca->hasName() ? alloca->getName().str() : "<unnamed>"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    log_print("Starting custom dataflow with " + std::to_string(tainted_memory_locations.size()) + " memory seeds...");
+    
+    bool changed = true;
+    int iterations = 0;
+    while (changed && iterations < 20) {
+        changed = false;
+        iterations++;
+        
+        for (llvm::Function &func : *original_module) {
+            if (func.isDeclaration()) continue;
+            for (llvm::BasicBlock &bb : func) {
+                for (llvm::Instruction &inst : bb) {
+                    if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&inst)) {
+                        llvm::Value *src_ptr = load->getPointerOperand();
+                        if (tainted_memory_locations.count(src_ptr) && !tainted_values.count(load)) {
+                            tainted_values.insert(load);
+                            changed = true;
+                        }
+                    }
+                    else if (auto *store = llvm::dyn_cast<llvm::StoreInst>(&inst)) {
+                        llvm::Value *stored_val = store->getValueOperand();
+                        llvm::Value *dest_ptr = store->getPointerOperand();
+                        if (tainted_values.count(stored_val) && !tainted_memory_locations.count(dest_ptr)) {
+                            tainted_memory_locations.insert(dest_ptr);
+                            changed = true;
+                        }
+                    }
+                    else if (auto *call = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+                        if (call->getCalledFunction() && call->getCalledFunction()->getName().startswith("llvm.")) {
+                            continue;
+                        }
+
+                        bool has_tainted_arg = false;
+                        for (unsigned i = 0; i < call->getNumArgOperands(); i++) {
+                            if (tainted_values.count(call->getArgOperand(i))) {
+                                has_tainted_arg = true;
+                                break;
+                            }
+                        }
+
+                        if (has_tainted_arg && !tainted_values.count(call)) {
+                            tainted_values.insert(call);
+                            changed = true;
+                            std::string func_name = call->getCalledFunction() ? 
+                                call->getCalledFunction()->getName().str() : "<indirect>";
+                            log_print("Custom found interprocedural taint: call to " + func_name);
+                        }
+                    }
+                    else {
+                        bool has_tainted_op = false;
+                        for (unsigned i = 0; i < inst.getNumOperands(); i++) {
+                            if (tainted_values.count(inst.getOperand(i))) {
+                                has_tainted_op = true;
+                                break;
+                            }
+                        }
+                        
+                        if (has_tainted_op && !tainted_values.count(&inst)) {
+                            tainted_values.insert(&inst);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    log_print("Total tainted values: " + std::to_string(tainted_values.size()));
+    
+    std::set<llvm::Value*> inter_only_values;
+    for (auto *val : tainted_values) {
+        if (llvm::isa<llvm::CallInst>(val)) {
+            inter_only_values.insert(val);
+        }
+    }
+    
+    log_print("Filtered to interprocedural only: " + std::to_string(inter_only_values.size()) + " calls");
+    log_print("Final result: PhASAR intra (" + std::to_string(phasar_intra_results.size()) + 
+             ") + Custom inter (" + std::to_string(inter_only_values.size()) + ")");
+    
+    log_print("Adding PhASAR intraprocedural results to output...");
+    for (auto *val : phasar_intra_results) {
+        bool already_added = false;
+        for (const auto &v : all_vars) {
+            if (v.variable == val) {
+                already_added = true;
+                break;
+            }
+        }
+        if (already_added) continue;
+        
+        auto *inst = llvm::dyn_cast<llvm::Instruction>(val);
+        if (inst) {
+            SensitiveVar derivedVar;
+            derivedVar.variable = val;
+            derivedVar.name = val->hasName() ? val->getName().str() : "<phasar_intra>";
+            derivedVar.location = inst;
+            derivedVar.derived = true;
+            all_vars.push_back(derivedVar);
+        }
+    }
+    
+    log_print("Adding custom interprocedural results to output...");
+    for (auto *val : inter_only_values) {
+        bool already_added = false;
+        for (const auto &v : all_vars) {
+            if (v.variable == val) {
+                already_added = true;
+                break;
+            }
+        }
+        if (already_added) continue;
+        
+        auto *inst = llvm::dyn_cast<llvm::Instruction>(val);
+        if (inst) {
+            SensitiveVar derivedVar;
+            derivedVar.variable = val;
+            derivedVar.name = val->hasName() ? val->getName().str() : "<custom_inter>";
+            derivedVar.location = inst;
+            derivedVar.derived = true;
+            all_vars.push_back(derivedVar);
+        }
+    }
+
+    // Cleanup
+    delete ICFG;
+    std::remove((ir_file + ".stripped.bc").c_str());
+    
     return all_vars;
 }
 
@@ -552,7 +1032,8 @@ int main(int argc, char *argv[]) {
     log_print("");
 
     // 4: Inject instructions
-    if (!inject_instructions(temp_bitcode, modified_bitcode, derived_vars, m)) {
+    log_print("[NOTE] Currently only instrumenting explicit variables (derived vars are from stripped IR)", false, Colors::YELLOW);
+    if (!inject_instructions(temp_bitcode, modified_bitcode, explicit_vars, m)) {
         return 1;
     }
     log_print("");
