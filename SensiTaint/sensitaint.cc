@@ -219,23 +219,19 @@ std::vector<llvm::CallInst*> find_malloc_stores(llvm::Value* ptr) {
     return mallocCalls;
 }
 
-
-std::vector<SensitiveVar>
-propagate_taint(const std::string &ir_file,
-                const std::vector<SensitiveVar> &explicit_vars) {
-    
+bool strip_ir_file(std::string ir_file, std::string stripped_ir, const std::vector<SensitiveVar> &explicit_vars) {
     if (!file_exists(ir_file)) {
-        throw std::runtime_error("IR file not found: " + ir_file);
+        log_print("[ERROR] IR file does not exist: " + ir_file, true);
+        return false;
     }
-
-    std::string stripped_ir = ir_file + ".stripped.bc";
     
     // load module
     static llvm::LLVMContext strip_ctx;
     static llvm::SMDiagnostic strip_err;
     auto strip_module = llvm::parseIRFile(ir_file, strip_err, strip_ctx);
     if (!strip_module) {
-        return explicit_vars;
+        log_print("[ERROR] Failed to load IR file for stripping: " + ir_file, true);
+        return false;
     }
     
     // remove llvm.var.annotation calls
@@ -301,12 +297,24 @@ propagate_taint(const std::string &ir_file,
     std::error_code ec;
     llvm::raw_fd_ostream out(stripped_ir, ec, llvm::sys::fs::F_None);
     if (ec) {
-        log_print("[ERROR] Failed to write stripped IR: " + ec.message());
-        return explicit_vars;
+        log_print("[ERROR] Failed to write stripped IR: " + ec.message(), true);
+        return false;
     }
     WriteBitcodeToFile(*strip_module, out);
     out.close();
     log_print("Stripped IR written to: " + stripped_ir);
+
+    return true;
+} 
+
+
+std::vector<SensitiveVar> propagate_taint(const std::string &ir_file, const std::vector<SensitiveVar> &explicit_vars) {
+    
+    std::string stripped_ir = ir_file + ".stripped.bc";
+    if (!strip_ir_file(ir_file, stripped_ir, explicit_vars)) {
+        log_print("[ERROR] Failed to strip IR file for taint analysis", true);
+        return explicit_vars;
+    }
 
     // Set up Phasar infrastructure
     psr::ProjectIRDB IRDB({stripped_ir});
