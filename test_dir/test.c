@@ -9,7 +9,7 @@ int inc(int val) {
 
 int main() {    
     // Enable a sensitive variable to ensure runtime is initialized
-    sensitive int x = 0xfeedbeef - 1;
+    int x = 0xfeedbeef - 1;
     
     int y = x + 1;
 
