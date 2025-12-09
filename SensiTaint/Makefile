@@ -16,9 +16,18 @@ CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -Wno-unused-parameter $(shell $(LLVM_CON
 LDFLAGS  = $(shell $(LLVM_CONFIG) --ldflags)
 LIBS     = $(shell $(LLVM_CONFIG) --libs core irreader bitwriter analysis) $(shell $(LLVM_CONFIG) --system-libs)
 
+PHASAR_ROOT ?= /opt/phasar/install
+PHASAR_DEPS_LIBDIR ?= $(PHASAR_ROOT)/lib/phasar/deps/lib
+
+CXXFLAGS += -I$(PHASAR_ROOT)/include
+LDFLAGS  += -L$(PHASAR_ROOT)/lib -L$(PHASAR_DEPS_LIBDIR)
+
 # PhASAR and its component libs
 CXXFLAGS += -DPHASAR_ENABLED -I/usr/local/include -I/opt/homebrew/include
 LIBS += -L/usr/local/lib \
+	-Wl,--whole-archive \
+	-lphasar_llvm_dataflow \
+  	-lphasar_llvm_domain \
 	-lphasar_llvm_ifdside \
 	-lphasar_llvm_db \
 	-lphasar_llvm_controlflow \
@@ -27,12 +36,16 @@ LIBS += -L/usr/local/lib \
 	-lphasar_llvm_utils \
 	-lphasar_llvm_mono \
 	-lphasar_llvm \
-	-lphasar_taintconfig \
 	-lphasar_controlflow \
+	-lphasar_taintconfig \
+	-lphasar_dataflow \
+	-lphasar_domain \
 	-lphasar_utils \
 	-lphasar_config \
 	-lphasar_pass \
-	-lphasar
+	-lphasar \
+	-Wl,--no-whole-archive \
+	-lnlohmann_json_schema_validator
 
 # Default target
 all: $(TARGET)

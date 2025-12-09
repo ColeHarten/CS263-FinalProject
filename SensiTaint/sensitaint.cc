@@ -27,16 +27,21 @@
 #include "llvm/IRReader/IRReader.h"
 
 #include "phasar/PhasarLLVM/ControlFlow/LLVMBasedICFG.h"
+#include "phasar/PhasarLLVM/DataFlow/IfdsIde/Problems/IFDSTaintAnalysis.h"
 #include "phasar/PhasarLLVM/DB/LLVMProjectIRDB.h"
 #include "phasar/PhasarLLVM/Pointer/LLVMAliasSet.h"
 #include "phasar/PhasarLLVM/TypeHierarchy/DIBasedTypeHierarchy.h"
-#include "phasar/PhasarLLVM/DataFlow/IfdsIde/Problems/IFDSTaintAnalysis.h"
-#include "phasar/DataFlow/IfdsIde/Solver/IFDSSolver.h"
+
+
 #include "phasar/PhasarLLVM/TaintConfig/LLVMTaintConfig.h"
 #include "phasar/PhasarLLVM/TaintConfig/TaintConfigData.h"
 #include "phasar/PhasarLLVM/TaintConfig/TaintConfigBase.h"
 #include "phasar/PhasarLLVM/HelperAnalyses.h"
+
 #include "phasar/ControlFlow/CallGraphAnalysisType.h"
+
+#include "phasar/DataFlow/IfdsIde/Solver/IFDSSolver.h"
+
 #include <set>
 #include <map>
 
@@ -660,7 +665,7 @@ bool preprocess_source(const std::string& source_file, std::string& preprocessed
 // Step 2: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
     log_print("[STEP 2] Generating bytecode from source...", false, Colors::BOLD + Colors::BLUE);
-    std::string cmd = "/opt/homebrew/opt/llvm@15/bin/clang -O0 -g -emit-llvm -c " + source_file + " -o " + bitcode_file;
+    std::string cmd = "clang -O0 -g -emit-llvm -c " + source_file + " -o " + bitcode_file;
     if (!run_command(cmd)) {
         log_print("[ERROR] Failed to generate bytecode", true);
         return false;
