@@ -68,3 +68,5 @@ vgcore.*
 # Large binary files and build artifacts
 SensiTaint/core
 **/core
+
+build/

@@ -1,4 +1,6 @@
 #include "utils.hh"
+#include <string>
+#include <fstream>
 #include <iostream>
 
 void log_print(const std::string& str, bool error, const std::string& color) {
@@ -17,4 +19,10 @@ bool run_command(const std::string& cmd) {
     log_print("Running command: " + cmd);
     int result = std::system(cmd.c_str());
     return result == 0;
+}
+
+
+bool file_exists(const std::string &path) {
+    std::ifstream f(path.c_str());
+    return f.good();
 }

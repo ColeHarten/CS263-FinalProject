@@ -2,6 +2,8 @@
 #define SENSITAINT_UTILS_HH
 
 #include <string>
+#include <fstream>
+#include <iostream>
 
 #include "llvm/IR/Value.h"
 
@@ -21,5 +23,6 @@ namespace Colors {
 
 void log_print(const std::string& str, bool error = false, const std::string& color = "");
 bool run_command(const std::string& cmd);
+bool file_exists(const std::string &path);
 
 #endif

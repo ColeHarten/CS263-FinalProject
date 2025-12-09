@@ -12,7 +12,7 @@ struct SensitiveVar {
     llvm::Value* variable;
     std::string name;
     llvm::Instruction* location;
-    bool isGlobal;
+    bool derived = false;  // true if this variable was found through taint propagation
 };
 
 #endif

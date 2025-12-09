@@ -24,10 +24,26 @@
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IRReader/IRReader.h"
 
-// #include "phasar/DataFlow.h"               
-// #include "phasar/PhasarLLVM.h"
-// #include "phasar/DataFlow/IfdsIde/IFDSTabulationProblem.h"
-// #include "phasar/DataFlow/IfdsIde/FlowFunctions.h"
+// Standard library includes for taint propagation
+#include <map>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <cxxabi.h> 
+#include <cstdlib>
+#include <cstring>
+#include <queue>
+
+// Phasar includes for IFDS taint analysis
+#include "phasar/DB/ProjectIRDB.h"
+#include "phasar/PhasarLLVM/IfdsIde/Problems/IFDSTaintAnalysis.h"
+#include "phasar/PhasarLLVM/Utils/TaintConfiguration.h"
+#include "phasar/PhasarLLVM/ControlFlow/LLVMBasedICFG.h"
+#include "phasar/PhasarLLVM/IfdsIde/Solver/IFDSSolver.h"
+#include "phasar/PhasarLLVM/Pointer/LLVMTypeHierarchy.h"
 
 
 /*
@@ -150,6 +166,138 @@ std::vector<llvm::CallInst*> find_malloc_stores(llvm::Value* ptr) {
     return mallocCalls;
 }
 
+
+std::vector<SensitiveVar>
+propagate_taint(const std::string &ir_file,
+                const std::vector<SensitiveVar> &explicit_vars) {
+    
+    if (!file_exists(ir_file)) {
+        throw std::runtime_error("IR file not found: " + ir_file);
+    }
+
+    // Set up Phasar infrastructure
+    psr::ProjectIRDB IRDB({ir_file});
+
+    log_print("modules: " + std::to_string(IRDB.getAllModules().size()));
+    log_print("functions: " + std::to_string(IRDB.getAllFunctions().size()));
+
+
+    auto modules = IRDB.getAllModules();
+    if (modules.empty()) {
+        log_print("IRDB has no modules!");
+        return {};
+    }
+
+    auto funcs = IRDB.getAllFunctions();
+    if (funcs.empty()) {
+        log_print("IRDB has no functions!");
+        return {};
+    }
+
+    for (auto *func : funcs) {
+        if (!func) log_print("nullptr function in IRDB");
+        else log_print("Function loaded: " + func->getName().str() +
+                    (func->isDeclaration() ? " (declaration)" : " (definition)"));
+    }
+
+    psr::LLVMTypeHierarchy TH(IRDB);
+
+    int num_decl_only = 0;
+    for (auto *func : IRDB.getAllFunctions()) {
+        if (func->isDeclaration()) ++num_decl_only;
+    }
+    log_print("Number of function declarations without definition: " + std::to_string(num_decl_only));
+
+    psr::LLVMBasedICFG ICFG(TH, IRDB, psr::CallGraphAnalysisType::CHA);
+
+    psr::TaintConfiguration<const llvm::Value*> TaintConfig;
+
+    // Map from instruction -> set of tainted values
+    std::map<const llvm::Instruction*, std::set<const llvm::Value*>> seeds;
+
+
+    // Loop over all sensitive variables
+    for (auto &var : explicit_vars) {
+        if (!var.location) {
+            log_print("Warning: explicit var " + var.name + " has null location, skipping");
+            continue;
+        }
+        if (!var.variable) {
+            log_print("Warning: explicit var " + var.name + " has null variable, skipping");
+            continue;
+        }
+        seeds[var.location].insert(var.variable);
+    }
+
+    // Add these seeds to the TaintConfiguration
+    TaintConfig.addInitialSeeds(seeds);
+
+    psr::IFDSTaintAnalysis TaintProblem(ICFG, TH, IRDB, TaintConfig);
+
+    psr::IFDSSolver<
+        const llvm::Instruction*,  
+        const llvm::Value*,        
+        const llvm::Function*,     
+        psr::LLVMBasedICFG&        
+    > Solver(TaintProblem);        
+
+    try {
+        Solver.solve();
+    } catch (const std::exception &e) {
+        log_print("Solver crashed with exception: " + std::string(e.what()));
+        return explicit_vars;
+    } catch (...) {
+        log_print("Solver crashed with unknown exception");
+        return explicit_vars;
+    }
+
+    // Extract results from solver
+    std::vector<SensitiveVar> all_vars = explicit_vars;
+    std::set<const llvm::Value *> seen_vars;
+
+    for (const auto &var : explicit_vars) {
+        if (var.variable) seen_vars.insert(var.variable);
+    }
+
+    // Iterate through all functions to find tainted values
+    for (auto *func : IRDB.getAllFunctions()) {
+        if (!func) continue;
+        if (func->isDeclaration()) continue;
+
+        for (auto &bb : *func) {
+            for (auto &inst : bb) {
+                // Check if this instruction has tainted values
+                auto taintSet = Solver.ifdsResultsAt(&inst);
+                if (taintSet.empty()) continue;
+
+                for (const auto *taintedVal : taintSet) {
+                    if (!taintedVal) continue;
+                    if (seen_vars.find(taintedVal) != seen_vars.end()) continue;
+
+                    std::string name = taintedVal->hasName() ? 
+                        taintedVal->getName().str() : 
+                        "<derived_" + std::to_string(seen_vars.size()) + ">";
+
+                    // Create a SensitiveVar for this derived tainted value
+                    SensitiveVar derivedVar;
+                    derivedVar.variable = const_cast<llvm::Value*>(taintedVal);
+                    derivedVar.name = name;
+                    derivedVar.location = const_cast<llvm::Instruction*>(&inst);
+                    derivedVar.derived = true;
+
+                    all_vars.push_back(derivedVar);
+                    seen_vars.insert(taintedVal);
+
+                    log_print("Found derived sensitive var: " + name + " in " + func->getName().str());
+                }
+            }
+        }
+    }
+
+    return all_vars;
+}
+
+
 void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<SensitiveVar>& vars) {
     llvm::Module &M = *m;
     llvm::LLVMContext &Ctx = M.getContext();
@@ -163,12 +311,6 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
 
         llvm::IRBuilder<> B(v.location->getNextNode());
         llvm::Value *ptr = v.variable;
-
-        // Debug: Print the actual type of ptr to understand what we're dealing with
-        log_print("DEBUG: Variable '" + v.name + "' has type: " + std::string(ptr->getValueName() ? ptr->getValueName()->getKey().str() : "unnamed"));
-        if (auto *inst = llvm::dyn_cast<llvm::Instruction>(ptr)) {
-            log_print("DEBUG: Instruction opcode: " + std::to_string(inst->getOpcode()));
-        }
         
         // Handle bitcast instructions that wrap allocas
         llvm::Value *actualPtr = ptr;
@@ -280,9 +422,10 @@ void instrument_vars(std::shared_ptr<llvm::Module> m, const std::vector<Sensitiv
 // 5-step pipeline:
 //      1) Generate basic bytecode from source
 //      2) Parse module and identify all sensitive variables
-//      3) Inject instructions for sensitive variables
-//      4) Build final executable
-//      5) Clean up temporary files
+//      3) Propagate taint from explicit vars to find implicitly sensitive vars
+//      4) Inject instructions for sensitive variables
+//      5) Build final executable
+//      6) Clean up temporary files
 
 // Step 1: Generate basic bytecode from source
 bool generate_bytecode(const std::string& source_file, const std::string& bitcode_file) {
@@ -322,9 +465,9 @@ std::vector<SensitiveVar> identify_sensitive_vars(const std::string& bitcode_fil
     return vars;
 }
 
-// Step 3: Inject instructions for sensitive variables
+// Step 4: Inject instructions for sensitive variables
 bool inject_instructions(const std::string& input_file, const std::string& output_file, std::vector<SensitiveVar> vars, std::shared_ptr<llvm::Module> m) {
-    log_print("[STEP 3] Injecting instructions...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 4] Injecting instructions...", false, Colors::BOLD + Colors::BLUE);
     
     instrument_vars(m, vars);
     
@@ -336,13 +479,13 @@ bool inject_instructions(const std::string& input_file, const std::string& outpu
     }
     
     WriteBitcodeToFile(*m, out);
-    log_print("[STEP 3] Successfully instrumented and wrote: " + output_file, false, Colors::GREEN);
+    log_print("[STEP 4] Successfully instrumented and wrote: " + output_file, false, Colors::GREEN);
     return true;
 }
 
-// Step 4: Build final executable
+// Step 5: Build final executable
 bool build_executable(const std::string& bitcode_file, const std::string& executable_file) {
-    log_print("[STEP 4] Building final executable...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 5] Building final executable...", false, Colors::BOLD + Colors::BLUE);
 
     // Build with no optimization
     std::string cmd = "clang -O0 " + bitcode_file + " runtime/runtime_helpers.c runtime/hashmap.c -o " + executable_file;
@@ -350,19 +493,19 @@ bool build_executable(const std::string& bitcode_file, const std::string& execut
         log_print("[ERROR] Failed to build executable", true);
         return false;
     }
-    log_print("[STEP 4] Successfully built executable: " + executable_file, false, Colors::GREEN);
+    log_print("[STEP 5] Successfully built executable: " + executable_file, false, Colors::GREEN);
     return true;
 }
 
-// Step 5: Clean up temporary files
+// Step 6: Clean up temporary files
 void cleanup_temp_files(const std::vector<std::string>& temp_files) {
-    log_print("[STEP 5] Cleaning up temporary files...", false, Colors::BOLD + Colors::BLUE);
+    log_print("[STEP 6] Cleaning up temporary files...", false, Colors::BOLD + Colors::BLUE);
     for (const auto& file : temp_files) {
         std::string cmd = "rm -f " + file;
         run_command(cmd);
         log_print("  - Removed: " + file);
     }
-    log_print("[STEP 5] Cleanup complete");
+    log_print("[STEP 6] Cleanup complete");
 }
 
 int main(int argc, char *argv[]) {
@@ -388,29 +531,42 @@ int main(int argc, char *argv[]) {
     // 2: Parse module and identify all sensitive variables    
     std::shared_ptr<llvm::Module> m;
     
-    std::vector<SensitiveVar> vars = identify_sensitive_vars(temp_bitcode, m);
-    if (vars.empty()) {
+    std::vector<SensitiveVar> explicit_vars = identify_sensitive_vars(temp_bitcode, m);
+    if (explicit_vars.empty()) {
         log_print("[WARNING] No sensitive variables found to instrument");
     }
     log_print("");
 
-    // 3: Inject instructions
-    if (!inject_instructions(temp_bitcode, modified_bitcode, vars, m)) {
+    // 3: Propagate taint to find implicit sensitive variables
+    log_print("[STEP 3] Propagating taint to find implicit sensitive variables...", false, Colors::BOLD + Colors::BLUE);
+    
+    auto derived_vars = propagate_taint(temp_bitcode, explicit_vars);
+    log_print("[STEP 3] Found " + std::to_string(derived_vars.size()) + " derived sensitive variables:", false, Colors::GREEN);
+    if (!derived_vars.empty()) {
+        for (const auto& var : derived_vars) {
+            log_print("  - " + var.name + " (derived)");
+        }
+    }
+    
+    log_print("");
+
+    // 4: Inject instructions
+    if (!inject_instructions(temp_bitcode, modified_bitcode, derived_vars, m)) {
         return 1;
     }
     log_print("");
     
-    // 4: Build final executable
+    // 5: Build final executable
     if (!build_executable(modified_bitcode, exec_file)) {
         return 1;
     }
     log_print("");
 
-    // 5: Clean up temporary files (temporarily disabled for debugging)
+    // 6: Clean up temporary files (temporarily disabled for debugging)
     cleanup_temp_files({temp_bitcode, modified_bitcode});
 
     log_print("\n=== Pipeline Complete ===", false, Colors::BOLD + Colors::GREEN);
     log_print("Instrumented executable created: " + exec_file);
-    log_print("Found and instrumented " + std::to_string(vars.size()) + " sensitive variables");
+    log_print("Found and instrumented " + std::to_string(derived_vars.size()) + " sensitive variables");
     return 0;
 }

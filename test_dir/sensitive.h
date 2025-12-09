@@ -1,4 +1,4 @@
-#define sensitive __attribute__((annotate("sensitive")))
+#define sensitive __attribute__((annotate("sensitive"))) volatile
 
 // #define SENSITIVE_BARRIER(var) \ 
 //         do { \ 
