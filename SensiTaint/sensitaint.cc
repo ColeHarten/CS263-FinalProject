@@ -207,7 +207,8 @@ propagate_taint(const std::string &ir_file,
         if (func->isDeclaration()) ++num_decl_only;
     }
     log_print("Number of function declarations without definition: " + std::to_string(num_decl_only));
-
+    
+    //! This line seg faults!
     psr::LLVMBasedICFG ICFG(TH, IRDB, psr::CallGraphAnalysisType::CHA);
 
     psr::TaintConfiguration<const llvm::Value*> TaintConfig;
