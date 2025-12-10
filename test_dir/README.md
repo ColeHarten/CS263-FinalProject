@@ -2,24 +2,23 @@
 
 Using `hyperfine` to compare runtime / memory overhead for baseline vs instrumented versions of different test files.
 
-I first installed `wget` in the container with `apg-get`, then installed `hyperfine`.
-
-Currently, we run 2 tests:
-
-## Test 1: Basic Execution Time and Memory Overhead
-
-## Test 2: Runtime Overhead as we scale number of tainted variables
-
-The test file is `test_scaling.c`. We run the following command to generate the statistics:
-
+First, we installed `wget` in the container with `sudo apt install wget`, then installed `hyperfine` with the following:
 ```
-hyperfine --parameter-scan n 20 100 -D 20 "./test_scaling_baseline {n}" "./test_scaling_instrumented {n}" --export-json scaling_results_2.json --export-csv scaling_results_2.csv
+wget https://github.com/sharkdp/hyperfine/releases/download/v1.20.0/hyperfine_1.20.0_amd64.deb
+sudo dpkg -i hyperfine_1.20.0_amd64.deb
 ```
 
-This runs each version of the test binaries (baseline and instrumented) with n blocks, for n in {20, 40, 60, 80, 100}. Each block is a function of the form:
+Currently, we run 1 test:
+
+## Test 1: Runtime Overhead as we scale number of tainted variables
+
+The test file is `test_scaling.c`. There are 2 binaries, one that is compiled with `gcc`, and one that is instrumented and compiled with `Sensitaint`.
+
+The source code for `test_scaling.c` contains several function definitions, created using a define block:
 
 ```
-void taint_block_##i(void) {                             \
+#define TAINT_BLOCK(i)                                       \
+    void taint_block_##i(void) {                             \
         sensitive int secret_##i = 0xfeed0000 ^ (i);         \
         int copy_##i       = secret_##i;                     \
         int arithmetic_##i = secret_##i + 100;               \
@@ -40,10 +39,25 @@ void taint_block_##i(void) {                             \
         (void)sink;                                          \
     }
 ```
+followed by another definition that expands 100 of these blocks. Our main function takes in a command line `N`, which is the parameter for how many of those blocks we execute. The resulting binaries can thus be run with command-line arguments, and so we create the benchmark results using `hyperfine` as follows.
 
+1. Generate runtime and memory usage for the baseline binary
+```
+hyperfine --parameter-scan n 20 100 -D 20 "./test_scaling_baseline {n}" --export-json scaling_baseline_results.json
+```
 
-### To-do:
-- Generate graph for test 2 for runtime
-- Generate graphs for the memory overhead of both tests
+2. Generate runtime and memory usage for the instrumented binary
+```
+hyperfine --parameter-scan n 20 100 -D 20 "./test_scaling_instrumented {n}" --export-json scaling_instrumented_results.json
+```
 
-Note: `plot_benchmark_comparison.py` is a script from the `hyperfine` repo for processing a `json` file produced by a benchmark run. It was used to generate `plot_benchmark.png`, which shows the runtime comparison of test_baseline vs test_instrumented.
+Each of these commands runs the respective test binaries (baseline and instrumented) with n blocks, for n in {20, 40, 60, 80, 100}.
+
+3. Generate graphs
+We built off of `plot_benchmark_comparison.py`, a script from the `hyperfine` repo for processing a `json` file produced by a benchmark run. It was edited to generate `runtime_plot.png` and `memory_overhead_plot.png`, which shows the runtime comparison of test_baseline vs test_instrumented.
+
+```
+python3 plot_benchmark_runtime.py scaling_baseline_results.json  scaling_instrumented_results.json --benchmark-names "Baseline" "Instrumented" --title "Runtime Comparison Between Baseline and Instrumented Binaries" -o runtime_plot.png
+```
+
+NOTE: The relevant binaries, scripts and results are now stored in `testing_binaries`, `testing_scripts` and `testing_scripts/results` respectively. Future testing should appropriately update paths in scripts to take this change into account.
