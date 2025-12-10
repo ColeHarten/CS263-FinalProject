@@ -7,5 +7,16 @@ To build the docker, in the `SensiTaint` directory run `make docker-run` to down
 Then, you can just hop in.
 
 ## Building
-To build, go into the `SensiTaint/build/` directror and run `make clean && make`. 
-Then to run the output, from `SensiTaint/`, run `./build/sensitaint ../test_dir/test.c test`.
+To build, go into the `SensiTaint/build/` directror and run:
+```
+mkdir -p build # make the build directory
+cd build
+cmake .. # generate build system using ../CMakeLists.txt
+cmake --build .
+
+```
+
+Then to run the output, from `SensiTaint/`: 
+```
+./build/sensitaint ../test_dir/test.c test.
+```
